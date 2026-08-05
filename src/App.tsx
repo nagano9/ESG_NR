@@ -8,11 +8,12 @@ import { IFCChecklist } from './components/safeguards/IFCChecklist.tsx';
 import { Tracker } from './components/actions/Tracker.tsx';
 import { DataEntry } from './components/entry/DataEntry.tsx';
 import { Stakeholders } from './components/stakeholders/Stakeholders.tsx';
+import { EntityWorkspace } from './components/entity/EntityWorkspace.tsx';
 import { useAuth } from './lib/AuthContext.tsx';
 import { Globe, LogIn } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = React.useState('overview');
+  const [activeTab, setActiveTab] = React.useState('entity-workspace');
   const { user, loading, login } = useAuth();
 
   if (loading) {
@@ -47,6 +48,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'overview': return <Overview />;
+      case 'entity-workspace': return <EntityWorkspace />;
       case 'data-entry': return <DataEntry />;
       case 'ghg': return <Inventory />;
       case 'materiality': return <Materiality />;
