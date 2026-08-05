@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertCircle, Building2, Database, Gauge, Globe, ListTodo, Save } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, Database, Gauge, Globe, ListTodo, RotateCcw, Save } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   createAction,
@@ -13,6 +13,7 @@ import {
   listMaterialityAssessments,
   listOrganizations,
   listRequirements,
+  updateDataPointStatus,
 } from "../../lib/api.ts";
 import { useAuth } from "../../lib/AuthContext.tsx";
 import type { ActionItem, DataPoint, DisclosureRequirement, GHGEntry, MaterialityAssessment, Organization, UserAccessProfile } from "../../types.ts";
@@ -117,6 +118,7 @@ export function EntityWorkspace() {
   const selectedOrg = organizations.find((org) => org.id === selectedOrgId);
   const totalEmissions = ghgEntries.reduce((sum, entry) => sum + entry.emissions, 0);
   const approvedData = dataPoints.filter((point) => point.status === "APPROVED").length;
+  const reviewData = dataPoints.filter((point) => point.status === "REVIEW");
   const openActions = actions.filter((action) => action.status !== "CLOSED").length;
 
   async function submitMetric(event: React.FormEvent) {
@@ -224,6 +226,18 @@ export function EntityWorkspace() {
     }
   }
 
+  async function reviewDataPoint(dataPoint: DataPoint, status: "DRAFT" | "APPROVED") {
+    try {
+      const updated = await updateDataPointStatus(dataPoint.id, status, getToken);
+      setDataPoints((current) => current.map((item) => item.id === updated.id ? updated : item));
+      toast.success(status === "APPROVED" ? "Submission approved" : "Submission returned to draft");
+    } catch (error) {
+      toast.error("Review action failed", {
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    }
+  }
+
   return (
     <div className="space-y-10">
       <Toaster position="top-right" richColors />
@@ -261,6 +275,53 @@ export function EntityWorkspace() {
             <WorkspaceMetric icon={Database} label="Approved / Total Data" value={`${approvedData}/${dataPoints.length}`} />
             <WorkspaceMetric icon={ListTodo} label="Open Actions" value={String(openActions)} tone={openActions > 0 ? "amber" : "green"} />
           </div>
+
+          {profile?.role === "PLN_NR" && (
+            <div className="border border-[#141414] bg-white p-6 shadow-[8px_8px_0_#141414]">
+              <div className="mb-5 flex items-center justify-between border-b border-[#141414] pb-3">
+                <div>
+                  <h3 className="text-[11px] font-bold uppercase tracking-widest">PLN NR Review Queue</h3>
+                  <p className="mt-1 text-[9px] font-bold uppercase tracking-widest opacity-50">Approve JV submitted ESG metrics for consolidation</p>
+                </div>
+                <span className="border border-amber-500 px-3 py-1 text-[9px] font-bold uppercase text-amber-600">{reviewData.length} Pending</span>
+              </div>
+              <div className="space-y-3">
+                {reviewData.length > 0 ? reviewData.slice(0, 8).map((item) => {
+                  const requirement = requirements.find((req) => req.id === item.requirementId);
+                  return (
+                    <div key={item.id} className="grid grid-cols-1 gap-4 border border-[#141414]/10 p-4 lg:grid-cols-6 lg:items-center">
+                      <div className="lg:col-span-2">
+                        <p className="text-[11px] font-bold uppercase tracking-tight">{requirement?.code ?? `Metric ${item.id}`}</p>
+                        <p className="mt-1 text-[9px] italic opacity-60">{requirement?.title ?? item.methodology ?? "Unmapped metric"}</p>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-bold uppercase opacity-40">Value</span>
+                        <p className="data-value">{item.value ?? item.numericValue ?? "-"} {item.unit ?? ""}</p>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-bold uppercase opacity-40">Source</span>
+                        <p className="text-[10px] font-bold uppercase tracking-tight">{item.source ?? "No source"}</p>
+                      </div>
+                      <div>
+                        <span className="text-[8px] font-bold uppercase opacity-40">Owner</span>
+                        <p className="text-[10px] font-bold uppercase tracking-tight">{item.owner ?? "Unknown"}</p>
+                      </div>
+                      <div className="flex gap-2 lg:justify-end">
+                        <button onClick={() => reviewDataPoint(item, "APPROVED")} className="flex items-center gap-1 bg-emerald-500 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-[#141414]">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+                        </button>
+                        <button onClick={() => reviewDataPoint(item, "DRAFT")} className="flex items-center gap-1 border border-[#141414] px-3 py-2 text-[9px] font-bold uppercase tracking-widest">
+                          <RotateCcw className="h-3.5 w-3.5" /> Return
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <p className="py-4 text-[10px] font-bold uppercase tracking-widest opacity-40">No submissions waiting for PLN NR review.</p>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <SubmissionPanel title="Submit ESG Metric" onSubmit={submitMetric} isSaving={isSaving}>
