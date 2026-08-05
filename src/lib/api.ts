@@ -66,8 +66,12 @@ export function listMaterialityAssessments(orgId?: number, getToken?: TokenProvi
   return apiRequest<MaterialityAssessment[]>(`/api/materiality${query}`, { getToken });
 }
 
-export function listAuditLogs(orgId: number | undefined, getToken: TokenProvider) {
-  const query = orgId ? `?orgId=${orgId}` : "";
+export function listAuditLogs(orgId: number | undefined, getToken: TokenProvider, options: { limit?: number; tableName?: string } = {}) {
+  const params = new URLSearchParams();
+  if (orgId) params.set("orgId", String(orgId));
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.tableName) params.set("tableName", options.tableName);
+  const query = params.toString() ? `?${params.toString()}` : "";
   return apiRequest<AuditLogEntry[]>(`/api/audit-logs${query}`, { getToken });
 }
 
