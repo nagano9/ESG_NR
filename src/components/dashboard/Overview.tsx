@@ -1,24 +1,19 @@
 import React from "react";
-import { AlertTriangle, ArrowRight, Globe, Shield } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Clock3, Globe, Shield } from "lucide-react";
 import { motion } from "motion/react";
 import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { listDataPoints, listGhgInventory, listOrganizations } from "../../lib/api.ts";
+import { listAuditLogs, listDataPoints, listGhgInventory, listOrganizations } from "../../lib/api.ts";
 import { ghgSummary2025, jvcEntities } from "../../data/ghgData.ts";
 import { formatNumber } from "../../lib/format.ts";
 import { cn } from "../../lib/utils.ts";
 import { AuditTrail } from "../common/AuditTrail.tsx";
-import type { DataPoint, GHGEntry, Organization } from "../../types.ts";
+import type { AuditLogEntry, DataPoint, GHGEntry, Organization } from "../../types.ts";
+import { useAuth } from "../../lib/AuthContext.tsx";
 
 const missingDisclosures = [
   { framework: "GRI 305-1", description: "Direct GHG Emissions", asset: "Scope 1 inventory", severity: "CRITICAL" },
   { framework: "GRI 305-2", description: "Energy Indirect GHG Emissions", asset: "Scope 2 inventory", severity: "HIGH" },
   { framework: "POJK 51-C", description: "Internal Environmental Strategy", asset: "Corporate", severity: "MEDIUM" },
-];
-
-const auditEntries = [
-  { id: "1", user: "USER_ADMIN", action: "Updated GRI mapping for 305-1", timestamp: "2024-10-27 14:22", oldValue: "Draft", newValue: "Verified" },
-  { id: "2", user: "SYSTEM", action: "Recalculated Scope 2 for Portfolio", timestamp: "2024-10-27 15:01", oldValue: "34,200", newValue: "32,780" },
-  { id: "3", user: "AI_ENGINE", action: "Flagged IFC PS3 gap in Solar_A", timestamp: "2024-10-27 16:45", oldValue: "No Issues", newValue: "Flagged" },
 ];
 
 function groupGhgByYear(entries: GHGEntry[]) {
@@ -44,10 +39,47 @@ function groupGhgByYear(entries: GHGEntry[]) {
   return [...yearly.values()].sort((a, b) => a.year.localeCompare(b.year));
 }
 
+function auditValue(value: unknown, key: string) {
+  if (typeof value !== "object" || value === null || !(key in value)) return null;
+  const fieldValue = (value as Record<string, unknown>)[key];
+  return fieldValue === null || fieldValue === undefined ? null : String(fieldValue);
+}
+
+function formatAuditEntries(entries: AuditLogEntry[]) {
+  if (entries.length === 0) {
+    return [
+      { id: "fallback-1", user: "SYSTEM", action: "Waiting for live audit signal", timestamp: "No events yet", oldValue: "-", newValue: "Ready" },
+    ];
+  }
+
+  return entries.slice(0, 8).map((entry) => ({
+    id: String(entry.id),
+    user: entry.changedBy ?? "System",
+    action: `${entry.tableName} ${entry.action}`.replaceAll("_", " "),
+    timestamp: entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Pending timestamp",
+    oldValue: auditValue(entry.oldValue, "status") ?? auditValue(entry.oldValue, "scope") ?? "-",
+    newValue: auditValue(entry.newValue, "status") ?? auditValue(entry.newValue, "scope") ?? auditValue(entry.newValue, "topic") ?? "Recorded",
+  }));
+}
+
+function portfolioHealth(dataPoints: DataPoint[]) {
+  const total = Math.max(dataPoints.length, 1);
+  const approved = dataPoints.filter((point) => point.status === "APPROVED").length;
+  const review = dataPoints.filter((point) => point.status === "REVIEW").length;
+  const draft = dataPoints.filter((point) => point.status === "DRAFT").length;
+  return {
+    approved,
+    review,
+    draft,
+    approvalRate: Math.round((approved / total) * 100),
+  };
+}
+
 function buildStats(orgs: Organization[], ghg: GHGEntry[], dataPoints: DataPoint[]) {
   const totalEmissions = ghg.reduce((sum, entry) => sum + entry.emissions, 0) || ghgSummary2025.totalEmissions;
   const approvedPoints = dataPoints.filter((point) => point.status === "APPROVED").length;
-  const intensity = totalEmissions / ghgSummary2025.revenue;
+  const revenue = ghgSummary2025.revenue;
+  const intensity = totalEmissions / revenue;
   const jvcCount = orgs.filter((org) => org.type === "JVC").length || jvcEntities.length;
 
   return [
@@ -68,29 +100,31 @@ function buildPortfolioRows(orgs: Organization[], ghg: GHGEntry[]) {
 
   return rows.map((org, index) => {
     const fallback = jvcEntities[index % jvcEntities.length];
-    const orgEntries = ghg.filter((entry) => entry.orgId === org.id);
-    const emissions = orgEntries.reduce((sum, entry) => sum + entry.emissions, 0) || fallback.emissions;
+    const emissions = ghg.filter((entry) => entry.orgId === org.id).reduce((sum, entry) => sum + entry.emissions, 0) || fallback.emissions;
+    const liveRecords = ghg.filter((entry) => entry.orgId === org.id).length;
 
     return {
       name: org.name,
       emissions,
       social: 92,
       governance: 100,
-      status: orgEntries.length > 0 ? "Live Signal" : fallback.status === "Operasional" ? "Demo Signal" : "Needs Data",
-      variance: orgEntries.length > 0 ? `${orgEntries.length} records` : "Demo",
+      status: liveRecords > 0 ? "Live Signal" : fallback.status === "Operasional" ? "Demo Signal" : "Needs Data",
+      variance: liveRecords > 0 ? `${liveRecords} records` : "Demo",
       equity: fallback.equity,
       tkdn: "46.4%",
       partner: fallback.partner,
-      partnerSync: orgEntries.length > 0 ? "Synced" : "Pending",
+      partnerSync: liveRecords > 0 ? "Synced" : "Pending",
     };
   });
 }
 
 export function Overview() {
+  const { getToken } = useAuth();
   const [selectedJVC, setSelectedJVC] = React.useState<string | null>(null);
   const [organizations, setOrganizations] = React.useState<Organization[]>([]);
   const [ghgEntries, setGhgEntries] = React.useState<GHGEntry[]>([]);
   const [dataPoints, setDataPoints] = React.useState<DataPoint[]>([]);
+  const [auditEntries, setAuditEntries] = React.useState<AuditLogEntry[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [usingFallback, setUsingFallback] = React.useState(false);
 
@@ -99,15 +133,17 @@ export function Overview() {
     async function loadDashboardData() {
       setIsLoading(true);
       try {
-        const [orgs, ghg, points] = await Promise.all([
-          listOrganizations(),
-          listGhgInventory(),
-          listDataPoints(),
+        const [orgs, ghg, points, audits] = await Promise.all([
+          listOrganizations(getToken),
+          listGhgInventory(undefined, getToken),
+          listDataPoints(undefined, getToken),
+          listAuditLogs(undefined, getToken, { limit: 50 }),
         ]);
         if (!active) return;
         setOrganizations(orgs);
         setGhgEntries(ghg);
         setDataPoints(points);
+        setAuditEntries(audits);
       } catch (error) {
         if (!active) return;
         setUsingFallback(true);
@@ -126,11 +162,12 @@ export function Overview() {
   const portfolioRows = buildPortfolioRows(organizations, ghgEntries);
   const activeJVC = portfolioRows.find((jvc) => jvc.name === selectedJVC);
   const gapCount = missingDisclosures.length + Math.max(0, portfolioRows.filter((row) => row.partnerSync === "Pending").length - 1);
+  const health = portfolioHealth(dataPoints);
 
   return (
     <div className="space-y-12">
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">
-        <div className="space-y-8 lg:col-span-3">
+        <div className="lg:col-span-3 space-y-8">
           <div className="overflow-hidden border border-red-500 bg-red-50/10 shadow-[8px_8px_0_#EF4444]">
             <div className="flex items-center justify-between border-b border-red-600 bg-red-500 p-3 text-white">
               <div className="flex items-center gap-2">
@@ -148,7 +185,7 @@ export function Overview() {
                   </div>
                   <div>
                     <span className="text-[10px] uppercase tracking-widest opacity-60">Disclosure</span>
-                    <p className="text-[11px] font-medium italic">{alert.description}</p>
+                    <p className="text-[11px] italic font-medium">{alert.description}</p>
                   </div>
                   <div>
                     <span className="text-[10px] uppercase tracking-widest opacity-60">Target Asset</span>
@@ -168,13 +205,40 @@ export function Overview() {
               Dashboard fallback is active. Configure database and API routes to see live KPIs.
             </div>
           )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="app-card p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="app-muted">Approval Rate</span>
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              </div>
+              <p className="text-2xl font-semibold tracking-tight text-slate-950">{health.approvalRate}%</p>
+              <p className="mt-2 text-xs font-medium text-slate-500">{health.approved} approved submissions</p>
+            </div>
+            <div className="app-card p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="app-muted">Review Queue</span>
+                <Clock3 className="h-4 w-4 text-amber-500" />
+              </div>
+              <p className="text-2xl font-semibold tracking-tight text-slate-950">{health.review}</p>
+              <p className="mt-2 text-xs font-medium text-slate-500">{health.draft} returned/draft items</p>
+            </div>
+            <div className="app-card p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="app-muted">Audit Events</span>
+                <Shield className="h-4 w-4 text-sky-500" />
+              </div>
+              <p className="text-2xl font-semibold tracking-tight text-slate-950">{auditEntries.length}</p>
+              <p className="mt-2 text-xs font-medium text-slate-500">Latest tenant-filtered events</p>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4">
           <div className="bg-[#141414] p-5 text-[#E4E3E0] shadow-[4px_4px_0_#A09F9C]">
             <span className="mb-2 block text-[9px] font-bold uppercase tracking-widest text-amber-400">Carbon Tax Liability (Est.)</span>
             <p className="text-2xl font-bold tracking-tighter">IDR {formatNumber((ghgEntries.reduce((sum, entry) => sum + entry.emissions, 0) || ghgSummary2025.totalEmissions) * 8750, 1)}</p>
-            <p className="mt-2 border-t border-white/10 pt-2 text-[8px] uppercase italic opacity-60">@ IDR 8,750/tCO2e working assumption</p>
+            <p className="mt-2 border-t border-white/10 pt-2 text-[8px] italic uppercase opacity-60">@ IDR 8,750/tCO2e working assumption</p>
           </div>
           <div className="border border-[#141414] bg-white p-5 shadow-[4px_4px_0_#141414]">
             <span className="mb-2 block text-[9px] font-bold uppercase opacity-60">Scope 3 C15 Portfolio</span>
@@ -195,10 +259,10 @@ export function Overview() {
       <div className="grid grid-cols-1 divide-y divide-[#141414] border border-[#141414] bg-white shadow-[4px_4px_0_#141414] md:grid-cols-2 md:divide-x md:divide-y-0 lg:grid-cols-4">
         {stats.map((stat) => (
           <div key={stat.label} className="p-6">
-            <span className="font-serif text-[10px] uppercase italic tracking-widest opacity-60">{stat.label}</span>
+            <span className="font-serif italic text-[10px] uppercase tracking-widest opacity-60">{stat.label}</span>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-3xl font-bold tracking-tighter">{stat.value}</span>
-              <span className="text-[10px] uppercase italic opacity-60">{stat.unit}</span>
+              <span className="text-[10px] italic uppercase opacity-60">{stat.unit}</span>
             </div>
             <p className={cn("mt-2 text-[9px] font-bold uppercase tracking-tighter", stat.trend === "up" ? "text-amber-600" : "text-emerald-600")}>{stat.change}</p>
           </div>
@@ -211,7 +275,7 @@ export function Overview() {
             <div className="border border-[#141414] bg-white p-8 shadow-[8px_8px_0_#141414] md:col-span-2">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h3 className="font-serif text-xl font-bold italic tracking-tight">Net Zero 2030 Roadmap</h3>
+                  <h3 className="font-serif italic text-xl font-bold tracking-tight">Net Zero 2030 Roadmap</h3>
                   <p className="mt-1 text-[10px] uppercase tracking-widest opacity-60">API-backed GHG trajectory</p>
                 </div>
                 <span className="bg-emerald-500 px-3 py-1 text-[10px] font-bold uppercase italic text-white">{isLoading ? "Loading" : "On Track"}</span>
@@ -304,9 +368,9 @@ export function Overview() {
         </div>
 
         <div className="space-y-8">
-          <AuditTrail entries={auditEntries} />
+          <AuditTrail entries={formatAuditEntries(auditEntries)} />
           <div className="border border-[#141414] bg-white p-6 shadow-[4px_4px_0_#141414]">
-            <span className="mb-4 block border-b border-[#141414]/10 pb-2 font-serif text-[10px] uppercase italic tracking-widest opacity-60">Intelligent Feed</span>
+            <span className="font-serif italic mb-4 block border-b border-[#141414]/10 pb-2 text-[10px] uppercase tracking-widest opacity-60">Intelligent Feed</span>
             <div className="space-y-4">
               {[
                 { title: "New POJK 51 Regulation Draft", source: "OJK", signal: "High Signal" },
