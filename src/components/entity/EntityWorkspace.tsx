@@ -8,6 +8,7 @@ import {
   createMaterialityAssessment,
   getAccessProfile,
   listActions,
+  listAuditLogs,
   listDataPoints,
   listGhgInventory,
   listMaterialityAssessments,
@@ -16,11 +17,13 @@ import {
   updateDataPointStatus,
 } from "../../lib/api.ts";
 import { useAuth } from "../../lib/AuthContext.tsx";
-import type { ActionItem, DataPoint, DisclosureRequirement, GHGEntry, MaterialityAssessment, Organization, UserAccessProfile } from "../../types.ts";
+import type { ActionItem, AuditLogEntry, DataPoint, DisclosureRequirement, GHGEntry, MaterialityAssessment, Organization, UserAccessProfile } from "../../types.ts";
 import { cn } from "../../lib/utils.ts";
+import { AuditTrail } from "../common/AuditTrail.tsx";
 
 type MetricForm = {
   requirementId: string;
+  period: string;
   value: string;
   numericValue: string;
   unit: string;
@@ -28,14 +31,62 @@ type MetricForm = {
   methodology: string;
 };
 
-const emptyMetric: MetricForm = {
-  requirementId: "",
-  value: "",
-  numericValue: "",
-  unit: "",
-  source: "",
-  methodology: "",
-};
+function reportingMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function emptyMetricForm(): MetricForm {
+  return {
+    requirementId: "",
+    period: reportingMonth(),
+    value: "",
+    numericValue: "",
+    unit: "",
+    source: "",
+    methodology: "",
+  };
+}
+
+function monthRange(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const periodStart = new Date(year, month - 1, 1);
+  const periodEnd = new Date(year, month, 0, 23, 59, 59);
+  return { periodStart, periodEnd };
+}
+
+function dataCompleteness(points: DataPoint[]) {
+  if (points.length === 0) return 0;
+  const complete = points.filter((point) => (
+    Boolean(point.source)
+    && Boolean(point.methodology)
+    && Boolean(point.periodStart)
+    && Boolean(point.periodEnd)
+    && (Boolean(point.value) || typeof point.numericValue === "number")
+  )).length;
+  return Math.round((complete / points.length) * 100);
+}
+
+function auditField(value: unknown, field: string) {
+  if (typeof value !== "object" || value === null || !(field in value)) return null;
+  const fieldValue = (value as Record<string, unknown>)[field];
+  return fieldValue === null || fieldValue === undefined ? null : String(fieldValue);
+}
+
+function formatAuditEntries(entries: AuditLogEntry[]) {
+  return entries.slice(0, 6).map((entry) => {
+    const oldStatus = auditField(entry.oldValue, "status") ?? "-";
+    const newStatus = auditField(entry.newValue, "status") ?? "-";
+    const reason = auditField(entry.newValue, "reason");
+    return {
+      id: String(entry.id),
+      user: entry.changedBy ?? "System",
+      action: entry.action.replaceAll("_", " "),
+      timestamp: entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "Pending timestamp",
+      oldValue: oldStatus,
+      newValue: reason && reason !== "null" ? `${newStatus} - ${reason}` : newStatus,
+    };
+  });
+}
 
 export function EntityWorkspace() {
   const { getToken } = useAuth();
@@ -47,9 +98,10 @@ export function EntityWorkspace() {
   const [ghgEntries, setGhgEntries] = React.useState<GHGEntry[]>([]);
   const [actions, setActions] = React.useState<ActionItem[]>([]);
   const [materiality, setMateriality] = React.useState<MaterialityAssessment[]>([]);
+  const [auditEntries, setAuditEntries] = React.useState<AuditLogEntry[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [metricForm, setMetricForm] = React.useState<MetricForm>(emptyMetric);
+  const [metricForm, setMetricForm] = React.useState<MetricForm>(emptyMetricForm);
   const [ghgForm, setGhgForm] = React.useState({ scope: "1", category: "", emissions: "", methodology: "" });
   const [actionForm, setActionForm] = React.useState({ title: "", owner: "", dueDate: "", description: "" });
   const [materialityForm, setMaterialityForm] = React.useState({ topic: "", impactMateriality: "HIGH", financialMateriality: "HIGH", rationale: "" });
@@ -91,17 +143,19 @@ export function EntityWorkspace() {
       if (!selectedOrgId) return;
       setIsLoading(true);
       try {
-        const [points, ghg, entityActions, topics] = await Promise.all([
+        const [points, ghg, entityActions, topics, audits] = await Promise.all([
           listDataPoints(selectedOrgId, getToken),
           listGhgInventory(selectedOrgId, getToken),
           listActions(selectedOrgId, getToken),
           listMaterialityAssessments(selectedOrgId, getToken),
+          listAuditLogs(selectedOrgId, getToken),
         ]);
         if (!active) return;
         setDataPoints(points);
         setGhgEntries(ghg);
         setActions(entityActions);
         setMateriality(topics);
+        setAuditEntries(audits);
       } catch (error) {
         toast.error("Failed to load entity data", {
           description: error instanceof Error ? error.message : "Please refresh and try again.",
@@ -120,6 +174,8 @@ export function EntityWorkspace() {
   const totalEmissions = ghgEntries.reduce((sum, entry) => sum + entry.emissions, 0);
   const approvedData = dataPoints.filter((point) => point.status === "APPROVED").length;
   const reviewData = dataPoints.filter((point) => point.status === "REVIEW");
+  const draftData = dataPoints.filter((point) => point.status === "DRAFT").length;
+  const completeness = dataCompleteness(dataPoints);
   const openActions = actions.filter((action) => action.status !== "CLOSED").length;
 
   async function submitMetric(event: React.FormEvent) {
@@ -127,12 +183,12 @@ export function EntityWorkspace() {
     if (!selectedOrgId) return;
     setIsSaving(true);
     try {
-      const now = new Date();
+      const { periodStart, periodEnd } = monthRange(metricForm.period);
       const created = await createDataPoint({
         orgId: selectedOrgId,
         requirementId: Number(metricForm.requirementId),
-        periodStart: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
-        periodEnd: now.toISOString(),
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
         value: metricForm.value,
         numericValue: metricForm.numericValue ? Number(metricForm.numericValue) : undefined,
         unit: metricForm.unit,
@@ -142,7 +198,13 @@ export function EntityWorkspace() {
         status: "REVIEW",
       }, getToken);
       setDataPoints((current) => [created, ...current]);
-      setMetricForm(emptyMetric);
+      const audits = await listAuditLogs(selectedOrgId, getToken);
+      setAuditEntries(audits);
+      setMetricForm((current) => ({
+        ...emptyMetricForm(),
+        requirementId: current.requirementId,
+        unit: current.unit,
+      }));
       toast.success("ESG metric submitted for review");
     } catch (error) {
       toast.error("Metric submission failed", { description: error instanceof Error ? error.message : "Please try again." });
@@ -237,6 +299,8 @@ export function EntityWorkspace() {
     try {
       const updated = await updateDataPointStatus(dataPoint.id, status, getToken, reason);
       setDataPoints((current) => current.map((item) => item.id === updated.id ? updated : item));
+      const audits = await listAuditLogs(selectedOrgId ?? undefined, getToken);
+      setAuditEntries(audits);
       setReturnNotes((current) => {
         const next = { ...current };
         delete next[dataPoint.id];
@@ -285,10 +349,12 @@ export function EntityWorkspace() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
             <WorkspaceMetric icon={Building2} label="Entity" value={selectedOrg?.name ?? "Loading"} />
             <WorkspaceMetric icon={Globe} label="GHG Inventory" value={`${totalEmissions.toLocaleString()} tCO2e`} />
-            <WorkspaceMetric icon={Database} label="Approved / Total Data" value={`${approvedData}/${dataPoints.length}`} />
+            <WorkspaceMetric icon={Database} label="Approved Data" value={`${approvedData}/${dataPoints.length}`} tone={approvedData ? "green" : "neutral"} />
+            <WorkspaceMetric icon={CheckCircle2} label="Review / Draft" value={`${reviewData.length}/${draftData}`} tone={draftData ? "amber" : "green"} />
+            <WorkspaceMetric icon={Gauge} label="Completeness" value={`${completeness}%`} tone={completeness >= 80 ? "green" : "amber"} />
             <WorkspaceMetric icon={ListTodo} label="Open Actions" value={String(openActions)} tone={openActions > 0 ? "amber" : "green"} />
           </div>
 
@@ -350,7 +416,8 @@ export function EntityWorkspace() {
               <select value={metricForm.requirementId} onChange={(event) => setMetricForm((current) => ({ ...current, requirementId: event.target.value }))} className="field xl:col-span-2">
                 {requirements.map((req) => <option key={req.id} value={req.id}>{req.code} / {req.title}</option>)}
               </select>
-              <input value={metricForm.value} onChange={(event) => setMetricForm((current) => ({ ...current, value: event.target.value }))} placeholder="Reported value" className="field" required />
+              <input type="month" value={metricForm.period} onChange={(event) => setMetricForm((current) => ({ ...current, period: event.target.value }))} className="field" required />
+              <input value={metricForm.value} onChange={(event) => setMetricForm((current) => ({ ...current, value: event.target.value }))} placeholder="Reported value" className="field" />
               <input value={metricForm.numericValue} onChange={(event) => setMetricForm((current) => ({ ...current, numericValue: event.target.value }))} placeholder="Numeric value" className="field" />
               <input value={metricForm.unit} onChange={(event) => setMetricForm((current) => ({ ...current, unit: event.target.value }))} placeholder="Unit" className="field" />
               <input value={metricForm.source} onChange={(event) => setMetricForm((current) => ({ ...current, source: event.target.value }))} placeholder="Evidence source" className="field" required />
@@ -398,6 +465,8 @@ export function EntityWorkspace() {
             <RecentList title="Recent GHG Entries" items={ghgEntries.map((item) => `Scope ${item.scope} / ${item.emissions.toLocaleString()} ${item.unit}`)} />
             <RecentList title="Material Topics" items={materiality.map((item) => `${item.topic} / ${item.impactMateriality}`)} />
           </div>
+
+          <AuditTrail entries={formatAuditEntries(auditEntries)} />
         </>
       )}
     </div>
