@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertCircle, CheckCircle2, Clock, Database, Download, Plus, Save, Send, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Database, Download, Filter, Plus, Save, Search, Send, Upload } from "lucide-react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,11 +13,18 @@ import type { DataPoint, DisclosureRequirement, Organization } from "../../types
 const entrySchema = z.object({
   entity: z.string().min(1, "Entity is required"),
   requirementId: z.string().min(1, "Disclosure requirement is required"),
-  value: z.string().refine((value) => Number.isFinite(Number(value)), "Value must be numeric"),
+  value: z.string().optional(),
+  numericValue: z.string().optional(),
   unit: z.string().min(1, "Unit is required"),
   period: z.string().min(1, "Reporting period is required"),
   source: z.string().min(1, "Source is required"),
   methodology: z.string().min(10, "Methodology must be at least 10 characters"),
+}).refine((data) => Boolean(data.value?.trim()) || Boolean(data.numericValue?.trim()), {
+  message: "Reported value or numeric value is required",
+  path: ["value"],
+}).refine((data) => !data.numericValue || Number.isFinite(Number(data.numericValue)), {
+  message: "Numeric value must be a valid number",
+  path: ["numericValue"],
 });
 
 type EntryFormData = z.infer<typeof entrySchema>;
@@ -54,6 +61,8 @@ export function DataEntry() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [usingFallback, setUsingFallback] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("ALL");
   const { user, getToken } = useAuth();
 
   const form = useForm<EntryFormData>({
@@ -62,6 +71,7 @@ export function DataEntry() {
       entity: "",
       requirementId: "",
       value: "",
+      numericValue: "",
       unit: "tCO2e",
       period: "",
       source: "Manual",
@@ -86,7 +96,7 @@ export function DataEntry() {
     async function loadData() {
       setIsLoading(true);
       try {
-        const [orgs, reqs, points] = await Promise.all([listOrganizations(), listRequirements(), listDataPoints()]);
+        const [orgs, reqs, points] = await Promise.all([listOrganizations(getToken), listRequirements(), listDataPoints(undefined, getToken)]);
         if (!active) return;
         setOrganizations(orgs);
         setRequirements(reqs);
@@ -131,6 +141,7 @@ export function DataEntry() {
   const rows = dataPoints.map((point) => {
     const org = orgOptions.find((item) => item.id === point.orgId);
     const requirement = requirementOptions.find((item) => item.id === point.requirementId);
+    const hasEvidence = Boolean(point.source) && Boolean(point.methodology);
     return {
       id: `DP-${String(point.id).padStart(5, "0")}`,
       metric: requirement ? `${requirement.code}: ${requirement.title}` : "ESG Data Point",
@@ -140,8 +151,20 @@ export function DataEntry() {
       source: point.source ?? "Manual",
       status: point.status,
       period: point.periodEnd?.slice(0, 10) ?? "N/A",
+      quality: hasEvidence ? "Evidence ready" : "Needs evidence",
     };
   });
+  const filteredRows = rows.filter((row) => {
+    const matchesStatus = statusFilter === "ALL" || row.status === statusFilter;
+    const haystack = `${row.metric} ${row.entity} ${row.source} ${row.status}`.toLowerCase();
+    return matchesStatus && haystack.includes(searchTerm.toLowerCase());
+  });
+  const submissionHealth = {
+    total: rows.length,
+    review: rows.filter((row) => row.status === "REVIEW").length,
+    approved: rows.filter((row) => row.status === "APPROVED").length,
+    needsEvidence: rows.filter((row) => row.quality === "Needs evidence").length,
+  };
 
   async function onSubmit(data: EntryFormData) {
     const selectedOrg = orgOptions.find((org) => org.name === data.entity);
@@ -160,7 +183,7 @@ export function DataEntry() {
         periodStart: period.start,
         periodEnd: period.end,
         value: data.value,
-        numericValue: Number(data.value),
+        numericValue: data.numericValue ? Number(data.numericValue) : undefined,
         unit: data.unit,
         source: data.source,
         methodology: data.methodology,
@@ -190,7 +213,7 @@ export function DataEntry() {
           <p className="mt-1 text-[10px] uppercase tracking-widest opacity-60">API-backed ESG data intake and evidence readiness</p>
         </div>
         <div className="flex gap-3">
-          <button onClick={() => downloadCsv(rows)} className="flex items-center gap-2 border border-[#141414] px-5 py-3 text-[10px] font-bold uppercase tracking-widest">
+          <button onClick={() => downloadCsv(filteredRows)} className="flex items-center gap-2 border border-[#141414] px-5 py-3 text-[10px] font-bold uppercase tracking-widest">
             <Download className="h-4 w-4" /> Export CSV
           </button>
           <button onClick={() => setActiveTab("new")} className="flex items-center gap-2 bg-[#141414] px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-[#E4E3E0] shadow-[4px_4px_0_#A09F9C]">
@@ -206,8 +229,35 @@ export function DataEntry() {
         </div>
       )}
 
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <SubmissionMetric label="Total Submissions" value={submissionHealth.total} />
+        <SubmissionMetric label="In Review" value={submissionHealth.review} tone="amber" />
+        <SubmissionMetric label="Approved" value={submissionHealth.approved} tone="green" />
+        <SubmissionMetric label="Needs Evidence" value={submissionHealth.needsEvidence} tone={submissionHealth.needsEvidence ? "red" : "green"} />
+      </div>
+
       {activeTab === "list" ? (
-        <div className="border border-[#141414] bg-white shadow-[8px_8px_0_#D4D3D0]">
+        <div className="app-panel overflow-hidden">
+          <div className="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search metric, entity, source, or status"
+                className="field pl-10"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-slate-400" />
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="field w-44">
+                <option value="ALL">All status</option>
+                <option value="DRAFT">Draft</option>
+                <option value="REVIEW">Review</option>
+                <option value="APPROVED">Approved</option>
+              </select>
+            </div>
+          </div>
           <div className="grid grid-cols-6 bg-[#D4D3D0]/30">
             <div className="col-header col-span-2">Metric</div>
             <div className="col-header">Value</div>
@@ -218,19 +268,22 @@ export function DataEntry() {
           <div className="divide-y divide-[#141414]/10">
             {isLoading ? (
               <div className="p-6 text-[10px] font-bold uppercase tracking-widest opacity-50">Loading submissions...</div>
-            ) : rows.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
               <div className="p-8 text-center">
                 <Database className="mx-auto mb-4 h-8 w-8 opacity-30" />
-                <p className="text-[11px] font-bold uppercase tracking-widest">No ESG submissions yet</p>
+                <p className="text-[11px] font-bold uppercase tracking-widest">No ESG submissions match the current filter</p>
               </div>
-            ) : rows.map((row) => (
+            ) : filteredRows.map((row) => (
               <div key={row.id} className="grid grid-cols-6 items-center px-4 py-4 hover:bg-[#141414] hover:text-[#E4E3E0]">
                 <div className="col-span-2">
                   <p className="text-[11px] font-bold uppercase tracking-tight">{row.metric}</p>
                   <p className="mt-1 text-[9px] italic opacity-60">{row.entity}</p>
                 </div>
                 <div className="data-value">{row.value} {row.unit}</div>
-                <div className="text-[9px] font-bold uppercase">{row.source}</div>
+                <div>
+                  <p className="text-[9px] font-bold uppercase">{row.source}</p>
+                  <p className={cn("mt-1 text-[8px] font-semibold", row.quality === "Evidence ready" ? "text-emerald-600" : "text-amber-600")}>{row.quality}</p>
+                </div>
                 <div className="flex items-center gap-2 text-[9px] font-bold uppercase">
                   {row.status === "APPROVED" ? <CheckCircle2 className="h-3 w-3 text-emerald-500" /> : <Clock className="h-3 w-3 text-sky-500" />}
                   {row.status}
@@ -261,11 +314,16 @@ export function DataEntry() {
             </label>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
             <label className="space-y-2">
-              <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Value</span>
-              <input {...form.register("value")} className="w-full border-b-2 border-[#141414] py-2 text-[12px] font-bold outline-none" placeholder="450.2" />
+              <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Reported Value</span>
+              <input {...form.register("value")} className="w-full border-b-2 border-[#141414] py-2 text-[12px] font-bold outline-none" placeholder="Narrative or reported value" />
               {form.formState.errors.value && <p className="text-[9px] font-bold uppercase text-red-500">{form.formState.errors.value.message}</p>}
+            </label>
+            <label className="space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Numeric Value</span>
+              <input {...form.register("numericValue")} className="w-full border-b-2 border-[#141414] py-2 text-[12px] font-bold outline-none" placeholder="450.2" />
+              {form.formState.errors.numericValue && <p className="text-[9px] font-bold uppercase text-red-500">{form.formState.errors.numericValue.message}</p>}
             </label>
             <label className="space-y-2">
               <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Unit</span>
@@ -306,6 +364,20 @@ export function DataEntry() {
           </div>
         </form>
       )}
+    </div>
+  );
+}
+
+function SubmissionMetric({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "amber" | "green" | "red" }) {
+  return (
+    <div className="app-card p-5">
+      <span className="app-muted">{label}</span>
+      <p className={cn(
+        "mt-2 text-2xl font-semibold tracking-tight",
+        tone === "amber" ? "text-amber-600" : tone === "green" ? "text-emerald-600" : tone === "red" ? "text-red-600" : "text-slate-950",
+      )}>
+        {value}
+      </p>
     </div>
   );
 }
