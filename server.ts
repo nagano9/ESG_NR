@@ -166,6 +166,24 @@ function auditOrgId(value: unknown) {
   return Number.isInteger(orgId) && orgId > 0 ? orgId : null;
 }
 
+async function recordAudit(entry: {
+  tableName: string;
+  recordId: number;
+  action: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+  changedBy?: string;
+}) {
+  await db.insert(auditLogs).values({
+    tableName: entry.tableName,
+    recordId: entry.recordId,
+    action: entry.action,
+    oldValue: entry.oldValue ?? null,
+    newValue: entry.newValue ?? null,
+    changedBy: entry.changedBy,
+  });
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -322,7 +340,7 @@ async function startServer() {
       }
 
       const [newData] = await db.insert(dataPoints).values(parsed.data).returning();
-      await db.insert(auditLogs).values({
+      await recordAudit({
         tableName: "data_points",
         recordId: newData.id,
         action: "INSERT",
@@ -369,7 +387,7 @@ async function startServer() {
         updatedAt: new Date(),
       }).where(eq(dataPoints.id, id)).returning();
 
-      await db.insert(auditLogs).values({
+      await recordAudit({
         tableName: "data_points",
         recordId: id,
         action: "STATUS_CHANGE",
@@ -434,6 +452,19 @@ async function startServer() {
       }
 
       const [created] = await db.insert(ghgInventory).values(parsed.data).returning();
+      await recordAudit({
+        tableName: "ghg_inventory",
+        recordId: created.id,
+        action: "INSERT",
+        oldValue: null,
+        newValue: {
+          orgId: created.orgId,
+          scope: created.scope,
+          emissions: created.emissions,
+          unit: created.unit,
+        },
+        changedBy: access.email,
+      });
       res.json(created);
     } catch (err) {
       console.error("Failed to create GHG inventory entry:", err);
@@ -481,6 +512,19 @@ async function startServer() {
       }
 
       const [created] = await db.insert(actions).values(parsed.data).returning();
+      await recordAudit({
+        tableName: "actions",
+        recordId: created.id,
+        action: "INSERT",
+        oldValue: null,
+        newValue: {
+          orgId: created.orgId,
+          status: created.status,
+          priority: created.priority,
+          dueDate: created.dueDate,
+        },
+        changedBy: access.email,
+      });
       res.json(created);
     } catch (err) {
       console.error("Failed to create action:", err);
@@ -513,6 +557,21 @@ async function startServer() {
         status: parsed.data.status,
         updatedAt: new Date(),
       }).where(eq(actions.id, id)).returning();
+
+      await recordAudit({
+        tableName: "actions",
+        recordId: id,
+        action: "STATUS_CHANGE",
+        oldValue: {
+          orgId: existing.orgId,
+          status: existing.status,
+        },
+        newValue: {
+          orgId: updated.orgId,
+          status: updated.status,
+        },
+        changedBy: access.email,
+      });
 
       res.json(updated);
     } catch (err) {
@@ -561,6 +620,19 @@ async function startServer() {
       }
 
       const [created] = await db.insert(materialityAssessments).values(parsed.data).returning();
+      await recordAudit({
+        tableName: "materiality_assessments",
+        recordId: created.id,
+        action: "INSERT",
+        oldValue: null,
+        newValue: {
+          orgId: created.orgId,
+          topic: created.topic,
+          impactMateriality: created.impactMateriality,
+          financialMateriality: created.financialMateriality,
+        },
+        changedBy: access.email,
+      });
       res.json(created);
     } catch (err) {
       console.error("Failed to create materiality assessment:", err);
@@ -580,8 +652,12 @@ async function startServer() {
         return forbiddenTenant(res);
       }
 
-      const rows = await db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp)).limit(100);
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 250) : 100;
+      const tableName = typeof req.query.tableName === "string" ? req.query.tableName : null;
+      const rows = await db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp)).limit(limit);
       const visibleRows = rows.filter((entry) => {
+        if (tableName && entry.tableName !== tableName) return false;
         const entryOrgId = auditOrgId(entry.newValue) ?? auditOrgId(entry.oldValue);
         if (!entryOrgId) return access.role === "PLN_NR";
         if (orgId) return entryOrgId === orgId;
