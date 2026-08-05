@@ -3,7 +3,7 @@ import path from "path";
 import { z } from "zod";
 import { createServer as createViteServer } from "vite";
 import { db } from "./src/db/index.ts";
-import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, actions, materialityAssessments } from "./src/db/schema.ts";
+import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, actions, materialityAssessments, auditLogs } from "./src/db/schema.ts";
 import { eq } from "drizzle-orm";
 import { draftNarrativeDisclosure, performGapAnalysis } from "./src/lib/gemini.ts";
 import { seedESGData } from "./src/lib/seed.ts";
@@ -69,6 +69,10 @@ const actionStatusSchema = z.object({
 
 const dataPointStatusSchema = z.object({
   status: z.enum(["DRAFT", "REVIEW", "APPROVED"]),
+  reason: z.string().trim().max(1000).optional(),
+}).refine((data) => data.status !== "DRAFT" || Boolean(data.reason), {
+  message: "Return reason is required when sending a submission back to draft",
+  path: ["reason"],
 });
 
 const materialitySchema = z.object({
@@ -333,14 +337,33 @@ async function startServer() {
         return res.status(400).json(validationError(parsed.error));
       }
 
+      const [existing] = await db.select().from(dataPoints).where(eq(dataPoints.id, id));
+      if (!existing) {
+        return res.status(404).json({ error: "Data point not found" });
+      }
+
       const [updated] = await db.update(dataPoints).set({
         status: parsed.data.status,
         updatedAt: new Date(),
       }).where(eq(dataPoints.id, id)).returning();
 
-      if (!updated) {
-        return res.status(404).json({ error: "Data point not found" });
-      }
+      await db.insert(auditLogs).values({
+        tableName: "data_points",
+        recordId: id,
+        action: "STATUS_CHANGE",
+        oldValue: {
+          status: existing.status,
+          orgId: existing.orgId,
+          requirementId: existing.requirementId,
+        },
+        newValue: {
+          status: parsed.data.status,
+          orgId: updated.orgId,
+          requirementId: updated.requirementId,
+          reason: parsed.data.reason ?? null,
+        },
+        changedBy: access.email,
+      });
 
       res.json(updated);
     } catch (err) {
