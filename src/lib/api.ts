@@ -1,4 +1,4 @@
-import type { ActionItem, DataPoint, DisclosureRequirement, Framework, GHGEntry, MaterialityAssessment, Organization, UserAccessProfile } from "../types.ts";
+import type { ActionItem, AuditLogEntry, DataPoint, DisclosureRequirement, Framework, GHGEntry, MaterialityAssessment, Organization, UserAccessProfile } from "../types.ts";
 
 type TokenProvider = () => Promise<string | null>;
 
@@ -64,6 +64,11 @@ export function listActions(orgId?: number, getToken?: TokenProvider) {
 export function listMaterialityAssessments(orgId?: number, getToken?: TokenProvider) {
   const query = orgId ? `?orgId=${orgId}` : "";
   return apiRequest<MaterialityAssessment[]>(`/api/materiality${query}`, { getToken });
+}
+
+export function listAuditLogs(orgId: number | undefined, getToken: TokenProvider) {
+  const query = orgId ? `?orgId=${orgId}` : "";
+  return apiRequest<AuditLogEntry[]>(`/api/audit-logs${query}`, { getToken });
 }
 
 export function createDataPoint(input: Omit<DataPoint, "id" | "status"> & { status?: string }, getToken: TokenProvider) {
