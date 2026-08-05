@@ -1,0 +1,6 @@
+{
+  "name": "AIPulse ESG",
+  "description": "Central hub for ESG and sustainability management, covering double materiality, GHG inventory, and disclosure drafting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
