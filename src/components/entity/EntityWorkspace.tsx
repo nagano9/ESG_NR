@@ -251,23 +251,27 @@ export function EntityWorkspace() {
   }
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <Toaster position="top-right" richColors />
-      <div className="flex flex-col gap-4 border-b border-[#141414] pb-6 lg:flex-row lg:items-center lg:justify-between">
+      <div className="app-panel flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="font-serif text-xl font-bold uppercase italic tracking-tight">JV Entity Workspace</h2>
-          <p className="mt-1 text-[10px] uppercase tracking-widest opacity-60">Entity-only submission cockpit with tenant-filtered dashboard</p>
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+            <Building2 className="h-3.5 w-3.5" />
+            {profile?.role === "PLN_NR" ? "PLN NR portfolio mode" : "JV restricted mode"}
+          </div>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Entity ESG Workspace</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">A controlled workspace for JV submissions, review status, GHG data, material topics, and corrective actions.</p>
         </div>
         <div className="flex flex-wrap items-center gap-4">
-          <div className="border border-[#141414] bg-white px-4 py-3">
-            <span className="block text-[8px] font-bold uppercase tracking-widest opacity-40">Access Mode</span>
-            <span className="text-[11px] font-bold uppercase">{profile?.role === "PLN_NR" ? "PLN NR All Entities" : "JV Restricted"}</span>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <span className="block text-xs font-medium text-slate-500">Access mode</span>
+            <span className="text-sm font-semibold text-slate-950">{profile?.role === "PLN_NR" ? "All entities" : "Tenant restricted"}</span>
           </div>
           <select
             value={selectedOrgId ?? ""}
             disabled={profile?.role !== "PLN_NR"}
             onChange={(event) => setSelectedOrgId(Number(event.target.value))}
-            className="border border-[#141414] bg-white px-4 py-3 text-[10px] font-bold uppercase tracking-widest outline-none disabled:bg-[#D4D3D0]/40"
+            className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-100 disabled:text-slate-500"
           >
             {organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
           </select>
@@ -275,9 +279,9 @@ export function EntityWorkspace() {
       </div>
 
       {!selectedOrg && !isLoading ? (
-        <div className="flex items-start gap-3 border border-red-300 bg-red-50 p-5 text-red-900 shadow-[4px_4px_0_#EF4444]">
+        <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-5 text-red-900">
           <AlertCircle className="mt-0.5 h-4 w-4" />
-          <p className="text-[10px] font-bold uppercase tracking-widest">This account is authenticated but not mapped to a JV entity.</p>
+          <p className="text-sm font-medium">This account is authenticated but not mapped to a JV entity.</p>
         </div>
       ) : (
         <>
@@ -289,53 +293,53 @@ export function EntityWorkspace() {
           </div>
 
           {profile?.role === "PLN_NR" && (
-            <div className="border border-[#141414] bg-white p-6 shadow-[8px_8px_0_#141414]">
-              <div className="mb-5 flex items-center justify-between border-b border-[#141414] pb-3">
+            <div className="app-panel overflow-hidden">
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
                 <div>
-                  <h3 className="text-[11px] font-bold uppercase tracking-widest">PLN NR Review Queue</h3>
-                  <p className="mt-1 text-[9px] font-bold uppercase tracking-widest opacity-50">Approve JV submitted ESG metrics for consolidation</p>
+                  <h3 className="app-section-title">PLN NR Review Queue</h3>
+                  <p className="app-muted mt-1">Approve JV submitted ESG metrics for consolidation</p>
                 </div>
-                <span className="border border-amber-500 px-3 py-1 text-[9px] font-bold uppercase text-amber-600">{reviewData.length} Pending</span>
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">{reviewData.length} pending</span>
               </div>
-              <div className="space-y-3">
+              <div className="divide-y divide-slate-100">
                 {reviewData.length > 0 ? reviewData.slice(0, 8).map((item) => {
                   const requirement = requirements.find((req) => req.id === item.requirementId);
                   return (
-                    <div key={item.id} className="grid grid-cols-1 gap-4 border border-[#141414]/10 p-4 lg:grid-cols-7 lg:items-center">
+                    <div key={item.id} className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-7 lg:items-center">
                       <div className="lg:col-span-2">
-                        <p className="text-[11px] font-bold uppercase tracking-tight">{requirement?.code ?? `Metric ${item.id}`}</p>
-                        <p className="mt-1 text-[9px] italic opacity-60">{requirement?.title ?? item.methodology ?? "Unmapped metric"}</p>
+                        <p className="text-sm font-semibold text-slate-950">{requirement?.code ?? `Metric ${item.id}`}</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">{requirement?.title ?? item.methodology ?? "Unmapped metric"}</p>
                       </div>
                       <div>
-                        <span className="text-[8px] font-bold uppercase opacity-40">Value</span>
+                        <span className="app-muted">Value</span>
                         <p className="data-value">{item.value ?? item.numericValue ?? "-"} {item.unit ?? ""}</p>
                       </div>
                       <div>
-                        <span className="text-[8px] font-bold uppercase opacity-40">Source</span>
-                        <p className="text-[10px] font-bold uppercase tracking-tight">{item.source ?? "No source"}</p>
+                        <span className="app-muted">Source</span>
+                        <p className="text-sm font-medium text-slate-700">{item.source ?? "No source"}</p>
                       </div>
                       <div>
-                        <span className="text-[8px] font-bold uppercase opacity-40">Owner</span>
-                        <p className="text-[10px] font-bold uppercase tracking-tight">{item.owner ?? "Unknown"}</p>
+                        <span className="app-muted">Owner</span>
+                        <p className="text-sm font-medium text-slate-700">{item.owner ?? "Unknown"}</p>
                       </div>
                       <textarea
                         value={returnNotes[item.id] ?? ""}
                         onChange={(event) => setReturnNotes((current) => ({ ...current, [item.id]: event.target.value }))}
                         placeholder="Return note"
-                        className="min-h-20 border border-[#141414]/20 bg-[#F5F5F3] px-3 py-2 text-[10px] font-bold uppercase tracking-tight outline-none focus:border-[#141414]"
+                        className="min-h-20 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100"
                       />
                       <div className="flex gap-2 lg:justify-end">
-                        <button onClick={() => reviewDataPoint(item, "APPROVED")} className="flex items-center gap-1 bg-emerald-500 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-[#141414]">
+                        <button onClick={() => reviewDataPoint(item, "APPROVED")} className="btn-primary">
                           <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                         </button>
-                        <button onClick={() => reviewDataPoint(item, "DRAFT")} className="flex items-center gap-1 border border-[#141414] px-3 py-2 text-[9px] font-bold uppercase tracking-widest">
+                        <button onClick={() => reviewDataPoint(item, "DRAFT")} className="btn-secondary">
                           <RotateCcw className="h-3.5 w-3.5" /> Return
                         </button>
                       </div>
                     </div>
                   );
                 }) : (
-                  <p className="py-4 text-[10px] font-bold uppercase tracking-widest opacity-40">No submissions waiting for PLN NR review.</p>
+                  <p className="px-6 py-8 text-sm font-medium text-slate-500">No submissions waiting for PLN NR review.</p>
                 )}
               </div>
             </div>
@@ -402,23 +406,23 @@ export function EntityWorkspace() {
 
 function WorkspaceMetric({ icon: Icon, label, value, tone = "neutral" }: { icon: typeof Gauge; label: string; value: string; tone?: "neutral" | "amber" | "green" }) {
   return (
-    <div className="border border-[#141414] bg-white p-5 shadow-[4px_4px_0_#141414]">
+    <div className="app-card p-5">
       <div className="mb-4 flex items-center justify-between">
-        <span className="text-[8px] font-bold uppercase tracking-widest opacity-50">{label}</span>
+        <span className="text-xs font-medium text-slate-500">{label}</span>
         <Icon className={cn("h-4 w-4", tone === "amber" ? "text-amber-500" : tone === "green" ? "text-emerald-500" : "opacity-40")} />
       </div>
-      <p className="text-lg font-bold uppercase tracking-tight">{value}</p>
+      <p className="text-xl font-semibold tracking-tight text-slate-950">{value}</p>
     </div>
   );
 }
 
 function SubmissionPanel({ title, onSubmit, isSaving, children }: { title: string; onSubmit: (event: React.FormEvent) => void; isSaving: boolean; children: React.ReactNode }) {
   return (
-    <form onSubmit={onSubmit} className="border border-[#141414] bg-white p-6 shadow-[6px_6px_0_#D4D3D0]">
-      <div className="mb-5 flex items-center justify-between border-b border-[#141414] pb-3">
-        <h3 className="text-[11px] font-bold uppercase tracking-widest">{title}</h3>
-        <button type="submit" disabled={isSaving} className="flex items-center gap-2 bg-[#141414] px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-[#E4E3E0] disabled:opacity-50">
-          <Save className="h-3.5 w-3.5 text-emerald-400" /> Save
+    <form onSubmit={onSubmit} className="app-panel p-6">
+      <div className="mb-5 flex items-center justify-between border-b border-slate-200 pb-4">
+        <h3 className="app-section-title">{title}</h3>
+        <button type="submit" disabled={isSaving} className="btn-primary">
+          <Save className="h-3.5 w-3.5" /> Save
         </button>
       </div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">{children}</div>
@@ -428,15 +432,15 @@ function SubmissionPanel({ title, onSubmit, isSaving, children }: { title: strin
 
 function RecentList({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="border border-[#141414] bg-white p-6 shadow-[4px_4px_0_#A09F9C]">
-      <h3 className="mb-4 text-[10px] font-bold uppercase tracking-widest opacity-50">{title}</h3>
+    <div className="app-panel p-6">
+      <h3 className="mb-4 app-section-title">{title}</h3>
       <div className="space-y-3">
         {items.slice(0, 5).length > 0 ? items.slice(0, 5).map((item, index) => (
-          <div key={`${item}-${index}`} className="border-b border-[#141414]/10 pb-2 text-[10px] font-bold uppercase tracking-tight">
+          <div key={`${item}-${index}`} className="border-b border-slate-100 pb-2 text-sm font-medium text-slate-700">
             {item}
           </div>
         )) : (
-          <p className="text-[10px] font-bold uppercase tracking-widest opacity-40">No entries yet</p>
+          <p className="text-sm font-medium text-slate-500">No entries yet</p>
         )}
       </div>
     </div>
