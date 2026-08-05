@@ -1,10 +1,11 @@
 import React from "react";
-import { AlertCircle, ArrowRight, CheckCircle2, Download, FileText, Sparkles } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, Download, FileText, Filter, Search, ShieldCheck, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 import * as XLSX from "xlsx";
 import { draftNarrative, listDataPoints, listRequirements, runGapAnalysis } from "../../lib/api.ts";
 import { useAuth } from "../../lib/AuthContext.tsx";
 import { cn } from "../../lib/utils.ts";
+import type { DataPoint, DisclosureRequirement } from "../../types.ts";
 
 const frameworks = [
   { id: "gri", name: "GRI (Global Reporting Initiative)", progress: 65, status: "In Progress" },
@@ -14,10 +15,42 @@ const frameworks = [
 ];
 
 const fallbackDisclosures = [
-  { code: "305-1", title: "Direct (Scope 1) GHG Emissions", status: "Complete", data: "12,450 tCO2e", reviewer: "Budi Santoso", reviewDate: "2024-10-25" },
-  { code: "305-2", title: "Energy indirect (Scope 2) GHG Emissions", status: "Complete", data: "32,780 tCO2e", reviewer: "Siska Wijaya", reviewDate: "2024-10-26" },
-  { code: "305-3", title: "Other indirect (Scope 3) GHG Emissions", status: "Incomplete", data: null, reviewer: null, reviewDate: null },
+  { code: "305-1", title: "Direct (Scope 1) GHG Emissions", status: "Approved", data: "12,450 tCO2e", reviewer: "Budi Santoso", reviewDate: "2024-10-25", evidenceState: "Evidence ready", readiness: 100 },
+  { code: "305-2", title: "Energy indirect (Scope 2) GHG Emissions", status: "Approved", data: "32,780 tCO2e", reviewer: "Siska Wijaya", reviewDate: "2024-10-26", evidenceState: "Evidence ready", readiness: 100 },
+  { code: "305-3", title: "Other indirect (Scope 3) GHG Emissions", status: "Missing", data: null, reviewer: null, reviewDate: null, evidenceState: "No source data", readiness: 0 },
 ];
+
+type DisclosureRow = {
+  code: string;
+  title: string;
+  status: string;
+  data: string | null;
+  reviewer: string | null;
+  reviewDate: string | null;
+  evidenceState: string;
+  readiness: number;
+};
+
+function mapRequirementToDisclosure(requirement: DisclosureRequirement, dataPoints: DataPoint[]): DisclosureRow {
+  const mapped = dataPoints.filter((point) => point.requirementId === requirement.id);
+  const approved = mapped.find((point) => point.status === "APPROVED");
+  const review = mapped.find((point) => point.status === "REVIEW");
+  const draft = mapped.find((point) => point.status === "DRAFT");
+  const primary = approved ?? review ?? draft ?? mapped[0];
+  const rawValue = primary?.value ?? primary?.numericValue;
+  const value = rawValue === undefined || rawValue === null ? null : `${rawValue}${primary?.unit ? ` ${primary.unit}` : requirement.unit ? ` ${requirement.unit}` : ""}`;
+
+  return {
+    code: requirement.code,
+    title: requirement.title,
+    status: approved ? "Approved" : review ? "In Review" : draft ? "Draft" : primary ? "Mapped" : "Missing",
+    data: value,
+    reviewer: primary?.owner ?? null,
+    reviewDate: primary?.periodEnd ?? null,
+    evidenceState: primary?.source && primary?.methodology ? "Evidence ready" : primary ? "Needs evidence" : "No source data",
+    readiness: approved ? 100 : review ? 70 : draft ? 35 : primary ? 55 : 0,
+  };
+}
 
 export function Builder() {
   const [selectedFramework, setSelectedFramework] = React.useState(frameworks[0]);
@@ -25,23 +58,18 @@ export function Builder() {
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
   const [aiDraft, setAiDraft] = React.useState<string | null>(null);
   const [analysis, setAnalysis] = React.useState<Record<string, string>>({});
-  const [apiDisclosures, setApiDisclosures] = React.useState(fallbackDisclosures);
+  const [apiDisclosures, setApiDisclosures] = React.useState<DisclosureRow[]>(fallbackDisclosures);
+  const [searchTerm, setSearchTerm] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("All");
   const { getToken } = useAuth();
 
   React.useEffect(() => {
     let active = true;
     async function loadRequirements() {
       try {
-        const requirements = await listRequirements();
+        const [requirements, dataPoints] = await Promise.all([listRequirements(), listDataPoints(undefined, getToken)]);
         if (!active || requirements.length === 0) return;
-        setApiDisclosures(requirements.map((requirement) => ({
-          code: requirement.code,
-          title: requirement.title,
-          status: "Ready",
-          data: null,
-          reviewer: null,
-          reviewDate: null,
-        })));
+        setApiDisclosures(requirements.map((requirement) => mapRequirementToDisclosure(requirement, dataPoints)));
       } catch {
         setApiDisclosures(fallbackDisclosures);
       }
@@ -50,13 +78,28 @@ export function Builder() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [getToken]);
+
+  const statusOptions = React.useMemo(() => ["All", ...Array.from(new Set(apiDisclosures.map((item) => item.status)))], [apiDisclosures]);
+  const visibleDisclosures = React.useMemo(() => apiDisclosures.filter((item) => {
+    const query = searchTerm.trim().toLowerCase();
+    const matchesSearch = !query || item.code.toLowerCase().includes(query) || item.title.toLowerCase().includes(query);
+    const matchesStatus = statusFilter === "All" || item.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  }), [apiDisclosures, searchTerm, statusFilter]);
+  const readiness = React.useMemo(() => {
+    const mapped = apiDisclosures.filter((item) => item.data).length;
+    const approved = apiDisclosures.filter((item) => item.status === "Approved").length;
+    const gaps = apiDisclosures.filter((item) => item.status === "Missing").length;
+    const score = apiDisclosures.length ? Math.round(apiDisclosures.reduce((total, item) => total + item.readiness, 0) / apiDisclosures.length) : 0;
+    return { mapped, approved, gaps, score };
+  }, [apiDisclosures]);
 
   async function handleDraft() {
     setIsDrafting(true);
     setAnalysis({});
     try {
-      const currentData = await listDataPoints();
+      const currentData = await listDataPoints(undefined, getToken);
       const result = await draftNarrative(currentData.length > 0 ? currentData : apiDisclosures, selectedFramework.name, getToken);
       setAiDraft(result.narrative);
     } catch (error) {
@@ -71,10 +114,10 @@ export function Builder() {
     setIsAnalyzing(true);
     setAiDraft(null);
     try {
-      const [currentData, requirements] = await Promise.all([listDataPoints(), listRequirements()]);
+      const [currentData, requirements] = await Promise.all([listDataPoints(undefined, getToken), listRequirements()]);
       const findings = await runGapAnalysis(currentData, requirements.length > 0 ? requirements : apiDisclosures, getToken);
       setAnalysis(Object.fromEntries(findings.map((finding) => [
-        finding.requirementCode.replace(/^GRI\s+/i, ""),
+        finding.requirementCode.replace(/^GRI\\s+/i, ""),
         `${finding.status}: ${finding.gapDescription} Suggested action: ${finding.suggestedAction}`,
       ])));
     } catch (error) {
@@ -90,11 +133,13 @@ export function Builder() {
   }
 
   function handleExport() {
-    const data = apiDisclosures.map((disclosure) => ({
+    const data = visibleDisclosures.map((disclosure) => ({
       "Disclosure Code": `${selectedFramework.id.toUpperCase()} ${disclosure.code}`,
       Title: disclosure.title,
       Status: disclosure.status,
       Value: disclosure.data || "N/A",
+      "Readiness Score": `${disclosure.readiness}%`,
+      "Evidence State": disclosure.evidenceState,
       "Compliance Standard": selectedFramework.name,
       Reviewer: disclosure.reviewer || "N/A",
       "Review Date": disclosure.reviewDate || "N/A",
@@ -103,7 +148,7 @@ export function Builder() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Disclosure Register");
-    ws["!cols"] = [{ wch: 18 }, { wch: 42 }, { wch: 14 }, { wch: 18 }, { wch: 34 }, { wch: 20 }, { wch: 16 }, { wch: 24 }];
+    ws["!cols"] = [{ wch: 18 }, { wch: 42 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 34 }, { wch: 20 }, { wch: 16 }, { wch: 24 }];
     XLSX.writeFile(wb, `AIPulse_ESG_${selectedFramework.id}_report.xlsx`);
   }
 
@@ -158,14 +203,46 @@ export function Builder() {
           </header>
 
           <div className="space-y-6 p-8">
-            <span className="col-header block border-0 p-0">Target Disclosures</span>
-            {apiDisclosures.map((item) => (
+            <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+              {[
+                { label: "Mapped", value: readiness.mapped, icon: FileText },
+                { label: "Approved", value: readiness.approved, icon: CheckCircle2 },
+                { label: "Open Gaps", value: readiness.gaps, icon: AlertCircle },
+                { label: "Readiness", value: `${readiness.score}%`, icon: ShieldCheck },
+              ].map((metric) => (
+                <div key={metric.label} className="border border-[#141414]/10 bg-[#F9F9F8] p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[8px] font-bold uppercase tracking-widest opacity-50">{metric.label}</span>
+                    <metric.icon className="h-4 w-4 opacity-50" />
+                  </div>
+                  <span className="text-2xl font-bold tracking-tight">{metric.value}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-3 border-y border-[#141414]/10 py-4 md:flex-row md:items-center md:justify-between">
+              <span className="col-header block border-0 p-0">Target Disclosures</span>
+              <div className="flex flex-1 flex-col gap-3 md:max-w-xl md:flex-row">
+                <label className="flex flex-1 items-center gap-2 border border-[#141414]/20 bg-white px-3 py-2">
+                  <Search className="h-4 w-4 opacity-40" />
+                  <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search disclosure" className="w-full bg-transparent text-[10px] font-bold uppercase tracking-widest outline-none placeholder:opacity-30" />
+                </label>
+                <label className="flex items-center gap-2 border border-[#141414]/20 bg-white px-3 py-2">
+                  <Filter className="h-4 w-4 opacity-40" />
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="bg-transparent text-[10px] font-bold uppercase tracking-widest outline-none">
+                    {statusOptions.map((status) => <option key={status}>{status}</option>)}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            {visibleDisclosures.map((item) => (
               <div key={item.code} className="border border-[#141414]/10">
                 <div className="flex items-start justify-between p-4">
                   <div>
                     <div className="mb-1 flex items-center gap-2">
                       <span className="framework-tag">{item.code}</span>
-                      {item.status === "Complete" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-500" />}
+                      {item.status === "Approved" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <AlertCircle className="h-3.5 w-3.5 text-amber-500" />}
                     </div>
                     <h4 className="text-[11px] font-bold uppercase tracking-tight">{item.title}</h4>
                     <p className="mt-1 text-[8px] font-bold uppercase tracking-widest opacity-40">Reviewer: {item.reviewer ?? "Pending"}</p>
@@ -180,7 +257,10 @@ export function Builder() {
                 )}
                 <div className="flex items-center justify-between border-t border-[#141414]/10 bg-[#F9F9F8] p-4">
                   <span className="data-value">{item.data ?? "No mapped value"}</span>
-                  <span className="text-[8px] font-bold uppercase tracking-[0.2em] opacity-40">{item.data ? "Evidence mapped" : "Needs source data"}</span>
+                  <div className="flex items-center gap-4">
+                    <span className="text-[8px] font-bold uppercase tracking-[0.2em] opacity-40">{item.evidenceState}</span>
+                    <span className="text-[8px] font-bold uppercase tracking-[0.2em]">{item.readiness}% ready</span>
+                  </div>
                 </div>
               </div>
             ))}
