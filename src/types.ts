@@ -83,3 +83,10 @@ export interface MaterialityAssessment {
   rationale?: string;
   period: string;
 }
+
+export interface UserAccessProfile {
+  email: string;
+  role: "PLN_NR" | "JV";
+  orgIds: number[];
+  orgName?: string;
+}
