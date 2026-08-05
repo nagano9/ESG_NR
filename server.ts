@@ -96,6 +96,59 @@ function validationError(error: z.ZodError) {
   };
 }
 
+type AccessProfile = {
+  email: string;
+  role: "PLN_NR" | "JV";
+  orgIds: number[];
+};
+
+function parseEmailList(value?: string) {
+  return new Set((value ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
+}
+
+function parseEntityAccess() {
+  if (!process.env.JV_ENTITY_ACCESS) return new Map<string, number[]>();
+  try {
+    const parsed = JSON.parse(process.env.JV_ENTITY_ACCESS) as Record<string, number | number[]>;
+    return new Map(Object.entries(parsed).map(([email, orgIds]) => [
+      email.toLowerCase(),
+      Array.isArray(orgIds) ? orgIds : [orgIds],
+    ]));
+  } catch (error) {
+    console.error("Invalid JV_ENTITY_ACCESS JSON:", error);
+    return new Map<string, number[]>();
+  }
+}
+
+function getAccessProfile(user: AuthRequest["user"]): AccessProfile {
+  const email = String(user?.email ?? "").toLowerCase();
+  const adminEmails = parseEmailList(process.env.PLN_NR_ADMIN_EMAILS);
+  const claimRole = String(user?.role ?? user?.claims?.role ?? "").toUpperCase();
+
+  if (adminEmails.has(email) || claimRole === "PLN_NR") {
+    return { email, role: "PLN_NR", orgIds: [] };
+  }
+
+  const mappedOrgIds = parseEntityAccess().get(email);
+  const claimOrgId = Number(user?.orgId ?? user?.claims?.orgId);
+  const orgIds = mappedOrgIds ?? (Number.isInteger(claimOrgId) && claimOrgId > 0 ? [claimOrgId] : []);
+
+  return { email, role: "JV", orgIds };
+}
+
+function canAccessOrg(access: AccessProfile, orgId: number) {
+  return access.role === "PLN_NR" || access.orgIds.includes(orgId);
+}
+
+function requestedOrgId(req: express.Request) {
+  const value = Number(req.query.orgId);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function forbiddenTenant(res: express.Response) {
+  return res.status(403).json({ error: "Forbidden: entity access is not allowed for this account" });
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -115,6 +168,29 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/me/access", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const allOrgs = access.role === "PLN_NR"
+        ? await db.select().from(organizations)
+        : await db.select().from(organizations).where(eq(organizations.id, access.orgIds[0]));
+
+      res.json({
+        email: access.email,
+        role: access.role,
+        orgIds: access.role === "PLN_NR" ? allOrgs.map((org) => org.id) : access.orgIds,
+        orgName: allOrgs[0]?.name,
+      });
+    } catch (err) {
+      console.error("Failed to resolve access profile:", err);
+      res.status(500).json({ error: "Failed to resolve access profile" });
+    }
+  });
+
   app.post("/api/seed", requireAuth, async (req, res) => {
     try {
       await seedESGData();
@@ -125,9 +201,16 @@ async function startServer() {
   });
 
   // Organizations
-  app.get("/api/orgs", async (req, res) => {
+  app.get("/api/orgs", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const allOrgs = await db.select().from(organizations);
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const allOrgs = access.role === "PLN_NR"
+        ? await db.select().from(organizations)
+        : await db.select().from(organizations).where(eq(organizations.id, access.orgIds[0]));
       res.json(allOrgs);
     } catch (err) {
       console.error("Failed to fetch organizations:", err);
@@ -137,6 +220,11 @@ async function startServer() {
 
   app.post("/api/orgs", requireAuth, async (req: AuthRequest, res) => {
     try {
+      const access = getAccessProfile(req.user);
+      if (access.role !== "PLN_NR") {
+        return forbiddenTenant(res);
+      }
+
       const parsed = organizationSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json(validationError(parsed.error));
@@ -178,11 +266,22 @@ async function startServer() {
   });
 
   // Data Points
-  app.get("/api/data-points", async (req, res) => {
+  app.get("/api/data-points", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { orgId } = req.query;
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const orgId = requestedOrgId(req);
       if (orgId) {
-        const allData = await db.select().from(dataPoints).where(eq(dataPoints.orgId, Number(orgId)));
+        if (!canAccessOrg(access, orgId)) {
+          return forbiddenTenant(res);
+        }
+        const allData = await db.select().from(dataPoints).where(eq(dataPoints.orgId, orgId));
+        res.json(allData);
+      } else if (access.role === "JV") {
+        const allData = await db.select().from(dataPoints).where(eq(dataPoints.orgId, access.orgIds[0]));
         res.json(allData);
       } else {
         const allData = await db.select().from(dataPoints);
@@ -200,6 +299,10 @@ async function startServer() {
       if (!parsed.success) {
         return res.status(400).json(validationError(parsed.error));
       }
+      const access = getAccessProfile(req.user);
+      if (!canAccessOrg(access, parsed.data.orgId)) {
+        return forbiddenTenant(res);
+      }
 
       const [newData] = await db.insert(dataPoints).values(parsed.data).returning();
       res.json(newData);
@@ -210,11 +313,22 @@ async function startServer() {
   });
 
   // GHG Inventory
-  app.get("/api/ghg", async (req, res) => {
+  app.get("/api/ghg", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { orgId } = req.query;
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const orgId = requestedOrgId(req);
       if (orgId) {
-        const data = await db.select().from(ghgInventory).where(eq(ghgInventory.orgId, Number(orgId)));
+        if (!canAccessOrg(access, orgId)) {
+          return forbiddenTenant(res);
+        }
+        const data = await db.select().from(ghgInventory).where(eq(ghgInventory.orgId, orgId));
+        res.json(data);
+      } else if (access.role === "JV") {
+        const data = await db.select().from(ghgInventory).where(eq(ghgInventory.orgId, access.orgIds[0]));
         res.json(data);
       } else {
         const data = await db.select().from(ghgInventory);
@@ -232,6 +346,10 @@ async function startServer() {
       if (!parsed.success) {
         return res.status(400).json(validationError(parsed.error));
       }
+      const access = getAccessProfile(req.user);
+      if (!canAccessOrg(access, parsed.data.orgId)) {
+        return forbiddenTenant(res);
+      }
 
       const [created] = await db.insert(ghgInventory).values(parsed.data).returning();
       res.json(created);
@@ -242,11 +360,22 @@ async function startServer() {
   });
 
   // Actions
-  app.get("/api/actions", async (req, res) => {
+  app.get("/api/actions", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { orgId } = req.query;
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const orgId = requestedOrgId(req);
       if (orgId) {
-        const data = await db.select().from(actions).where(eq(actions.orgId, Number(orgId)));
+        if (!canAccessOrg(access, orgId)) {
+          return forbiddenTenant(res);
+        }
+        const data = await db.select().from(actions).where(eq(actions.orgId, orgId));
+        res.json(data);
+      } else if (access.role === "JV") {
+        const data = await db.select().from(actions).where(eq(actions.orgId, access.orgIds[0]));
         res.json(data);
       } else {
         const data = await db.select().from(actions);
@@ -264,6 +393,10 @@ async function startServer() {
       if (!parsed.success) {
         return res.status(400).json(validationError(parsed.error));
       }
+      const access = getAccessProfile(req.user);
+      if (!canAccessOrg(access, parsed.data.orgId)) {
+        return forbiddenTenant(res);
+      }
 
       const [created] = await db.insert(actions).values(parsed.data).returning();
       res.json(created);
@@ -280,6 +413,15 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid action id" });
       }
 
+      const access = getAccessProfile(req.user);
+      const [existing] = await db.select().from(actions).where(eq(actions.id, id));
+      if (!existing) {
+        return res.status(404).json({ error: "Action not found" });
+      }
+      if (!canAccessOrg(access, existing.orgId)) {
+        return forbiddenTenant(res);
+      }
+
       const parsed = actionStatusSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json(validationError(parsed.error));
@@ -290,10 +432,6 @@ async function startServer() {
         updatedAt: new Date(),
       }).where(eq(actions.id, id)).returning();
 
-      if (!updated) {
-        return res.status(404).json({ error: "Action not found" });
-      }
-
       res.json(updated);
     } catch (err) {
       console.error("Failed to update action:", err);
@@ -302,11 +440,22 @@ async function startServer() {
   });
 
   // Materiality Assessments
-  app.get("/api/materiality", async (req, res) => {
+  app.get("/api/materiality", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { orgId } = req.query;
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const orgId = requestedOrgId(req);
       if (orgId) {
-        const data = await db.select().from(materialityAssessments).where(eq(materialityAssessments.orgId, Number(orgId)));
+        if (!canAccessOrg(access, orgId)) {
+          return forbiddenTenant(res);
+        }
+        const data = await db.select().from(materialityAssessments).where(eq(materialityAssessments.orgId, orgId));
+        res.json(data);
+      } else if (access.role === "JV") {
+        const data = await db.select().from(materialityAssessments).where(eq(materialityAssessments.orgId, access.orgIds[0]));
         res.json(data);
       } else {
         const data = await db.select().from(materialityAssessments);
@@ -323,6 +472,10 @@ async function startServer() {
       const parsed = materialitySchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json(validationError(parsed.error));
+      }
+      const access = getAccessProfile(req.user);
+      if (!canAccessOrg(access, parsed.data.orgId)) {
+        return forbiddenTenant(res);
       }
 
       const [created] = await db.insert(materialityAssessments).values(parsed.data).returning();
