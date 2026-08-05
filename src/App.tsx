@@ -18,29 +18,31 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#F8FAFC]">
-        <div className="w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" />
       </div>
     );
   }
 
   if (!user) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-[#F8FAFC] p-8">
-        <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center mb-8 shadow-xl shadow-emerald-200">
-          <Globe className="text-white w-10 h-10" />
+      <div className="flex h-screen items-center justify-center bg-slate-50 p-8">
+        <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-600 text-white">
+            <Globe className="h-8 w-8" />
+          </div>
+          <h1 className="mb-2 text-2xl font-semibold text-slate-950">AIPulse ESG</h1>
+          <p className="mx-auto mb-8 max-w-sm text-sm leading-6 text-slate-500">
+            Centralized ESG management and executive intelligence for Nusantara Renewable Holding.
+          </p>
+          <button
+            onClick={login}
+            className="inline-flex w-full items-center justify-center gap-3 rounded-md bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            <LogIn className="h-5 w-5" />
+            Sign in with Google
+          </button>
         </div>
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">AIPulse ESG</h1>
-        <p className="text-slate-500 mb-8 text-center max-w-sm">
-          Centralized ESG management and executive intelligence for Nusantara Renewable Holding.
-        </p>
-        <button
-          onClick={login}
-          className="flex items-center gap-3 bg-slate-900 text-white px-8 py-4 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-lg"
-        >
-          <LogIn className="w-5 h-5" />
-          Sign in with Google
-        </button>
       </div>
     );
   }
