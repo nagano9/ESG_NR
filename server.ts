@@ -3,7 +3,7 @@ import path from "path";
 import { z } from "zod";
 import { createServer as createViteServer } from "vite";
 import { db } from "./src/db/index.ts";
-import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, actions } from "./src/db/schema.ts";
+import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, actions, materialityAssessments } from "./src/db/schema.ts";
 import { eq } from "drizzle-orm";
 import { draftNarrativeDisclosure, performGapAnalysis } from "./src/lib/gemini.ts";
 import { seedESGData } from "./src/lib/seed.ts";
@@ -65,6 +65,15 @@ const actionSchema = z.object({
 
 const actionStatusSchema = z.object({
   status: z.enum(["OPEN", "IN_PROGRESS", "CLOSED", "OVERDUE"]),
+});
+
+const materialitySchema = z.object({
+  orgId: z.number().int().positive(),
+  topic: z.string().min(1),
+  impactMateriality: z.enum(["LOW", "MEDIUM", "HIGH", "VERY_HIGH"]),
+  financialMateriality: z.enum(["LOW", "MEDIUM", "HIGH", "VERY_HIGH"]),
+  rationale: z.string().optional(),
+  period: z.string().min(1),
 });
 
 const aiDraftSchema = z.object({
@@ -289,6 +298,38 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to update action:", err);
       res.status(500).json({ error: "Failed to update action" });
+    }
+  });
+
+  // Materiality Assessments
+  app.get("/api/materiality", async (req, res) => {
+    try {
+      const { orgId } = req.query;
+      if (orgId) {
+        const data = await db.select().from(materialityAssessments).where(eq(materialityAssessments.orgId, Number(orgId)));
+        res.json(data);
+      } else {
+        const data = await db.select().from(materialityAssessments);
+        res.json(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch materiality assessments:", err);
+      res.status(500).json({ error: "Failed to fetch materiality assessments" });
+    }
+  });
+
+  app.post("/api/materiality", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const parsed = materialitySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [created] = await db.insert(materialityAssessments).values(parsed.data).returning();
+      res.json(created);
+    } catch (err) {
+      console.error("Failed to create materiality assessment:", err);
+      res.status(500).json({ error: "Failed to create materiality assessment" });
     }
   });
 
