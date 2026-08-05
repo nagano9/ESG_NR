@@ -1,23 +1,71 @@
 import express from "express";
 import path from "path";
+import { z } from "zod";
 import { createServer as createViteServer } from "vite";
 import { db } from "./src/db/index.ts";
-import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, materialityAssessments, actions, mappings } from "./src/db/schema.ts";
-import { eq, and } from "drizzle-orm";
+import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory } from "./src/db/schema.ts";
+import { eq } from "drizzle-orm";
 import { draftNarrativeDisclosure, performGapAnalysis } from "./src/lib/gemini.ts";
 import { seedESGData } from "./src/lib/seed.ts";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 
+const organizationSchema = z.object({
+  name: z.string().min(1),
+  type: z.enum(["HOLDING", "JVC", "ASSET"]).default("JVC"),
+  parentId: z.number().int().positive().optional(),
+  description: z.string().optional(),
+  location: z.string().optional(),
+  sector: z.string().optional(),
+});
+
+const dataPointSchema = z.object({
+  orgId: z.number().int().positive(),
+  requirementId: z.number().int().positive().optional(),
+  periodStart: z.coerce.date(),
+  periodEnd: z.coerce.date(),
+  value: z.string().optional(),
+  numericValue: z.number().finite().optional(),
+  unit: z.string().optional(),
+  source: z.string().optional(),
+  methodology: z.string().optional(),
+  owner: z.string().optional(),
+  status: z.enum(["DRAFT", "REVIEW", "APPROVED"]).default("REVIEW"),
+}).refine((data) => data.periodEnd >= data.periodStart, {
+  message: "periodEnd must be after or equal to periodStart",
+  path: ["periodEnd"],
+});
+
+const aiDraftSchema = z.object({
+  data: z.unknown(),
+  framework: z.string().min(1),
+});
+
+const gapAnalysisSchema = z.object({
+  currentData: z.unknown(),
+  requirements: z.unknown(),
+});
+
+function validationError(error: z.ZodError) {
+  return {
+    error: "Validation failed",
+    issues: error.issues.map((issue) => ({
+      path: issue.path.join("."),
+      message: issue.message,
+    })),
+  };
+}
+
 async function startServer() {
   const app = express();
-  app.use(express.json());
-  const PORT = 3000;
+  app.use(express.json({ limit: "1mb" }));
+  const PORT = Number(process.env.PORT ?? 3000);
 
-  // Run seed on startup
-  try {
-    await seedESGData();
-  } catch (err) {
-    console.error("Seeding failed", err);
+  if (process.env.SEED_ON_STARTUP === "true") {
+    try {
+      await seedESGData();
+    } catch (err) {
+      console.error("Seeding failed", err);
+    }
   }
 
   // --- API Routes ---
@@ -48,7 +96,12 @@ async function startServer() {
 
   app.post("/api/orgs", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const [newOrg] = await db.insert(organizations).values(req.body).returning();
+      const parsed = organizationSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [newOrg] = await db.insert(organizations).values(parsed.data).returning();
       res.json(newOrg);
     } catch (err) {
       console.error("Failed to create organization:", err);
@@ -102,7 +155,12 @@ async function startServer() {
 
   app.post("/api/data-points", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const [newData] = await db.insert(dataPoints).values(req.body).returning();
+      const parsed = dataPointSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [newData] = await db.insert(dataPoints).values(parsed.data).returning();
       res.json(newData);
     } catch (err) {
       console.error("Failed to create data point:", err);
@@ -130,7 +188,12 @@ async function startServer() {
   // AI Routes
   app.post("/api/ai/draft", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { data, framework } = req.body;
+      const parsed = aiDraftSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const { data, framework } = parsed.data;
       const result = await draftNarrativeDisclosure(data, framework);
       res.json(result);
     } catch (err) {
@@ -141,7 +204,12 @@ async function startServer() {
 
   app.post("/api/ai/gap-analysis", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { currentData, requirements } = req.body;
+      const parsed = gapAnalysisSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const { currentData, requirements } = parsed.data;
       const result = await performGapAnalysis(currentData, requirements);
       res.json(result);
     } catch (err) {

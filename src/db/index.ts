@@ -4,6 +4,14 @@ import * as schema from './schema.ts';
 
 const { Pool } = pg;
 
+const requiredEnv = ["SQL_HOST", "SQL_USER", "SQL_PASSWORD", "SQL_DB_NAME"] as const;
+
+for (const key of requiredEnv) {
+  if (!process.env[key]) {
+    throw new Error(`${key} must be set in environment variables.`);
+  }
+}
+
 // Add global connection pool caching to persist across hot-reloads
 declare global {
   var _postgresPool: pg.Pool | undefined;
@@ -13,10 +21,10 @@ declare global {
 export const createPool = () => {
   if (!global._postgresPool) {
     global._postgresPool = new Pool({
-      host: process.env.SQL_HOST,
-      user: process.env.SQL_USER,
-      password: process.env.SQL_PASSWORD,
-      database: process.env.SQL_DB_NAME,
+      host: process.env.SQL_HOST!,
+      user: process.env.SQL_USER!,
+      password: process.env.SQL_PASSWORD!,
+      database: process.env.SQL_DB_NAME!,
       max: 10,
       connectionTimeoutMillis: 15000,
     });
