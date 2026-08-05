@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createServer as createViteServer } from "vite";
 import { db } from "./src/db/index.ts";
 import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, actions, materialityAssessments, auditLogs } from "./src/db/schema.ts";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { draftNarrativeDisclosure, performGapAnalysis } from "./src/lib/gemini.ts";
 import { seedESGData } from "./src/lib/seed.ts";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
@@ -23,16 +23,19 @@ const dataPointSchema = z.object({
   requirementId: z.number().int().positive().optional(),
   periodStart: z.coerce.date(),
   periodEnd: z.coerce.date(),
-  value: z.string().optional(),
+  value: z.string().trim().optional(),
   numericValue: z.number().finite().optional(),
-  unit: z.string().optional(),
-  source: z.string().optional(),
-  methodology: z.string().optional(),
+  unit: z.string().trim().optional(),
+  source: z.string().trim().min(1),
+  methodology: z.string().trim().min(1),
   owner: z.string().optional(),
   status: z.enum(["DRAFT", "REVIEW", "APPROVED"]).default("REVIEW"),
 }).refine((data) => data.periodEnd >= data.periodStart, {
   message: "periodEnd must be after or equal to periodStart",
   path: ["periodEnd"],
+}).refine((data) => Boolean(data.value) || typeof data.numericValue === "number", {
+  message: "Either reported value or numeric value is required",
+  path: ["value"],
 });
 
 const ghgEntrySchema = z.object({
@@ -155,6 +158,12 @@ function requestedOrgId(req: express.Request) {
 
 function forbiddenTenant(res: express.Response) {
   return res.status(403).json({ error: "Forbidden: entity access is not allowed for this account" });
+}
+
+function auditOrgId(value: unknown) {
+  if (typeof value !== "object" || value === null || !("orgId" in value)) return null;
+  const orgId = Number((value as { orgId?: unknown }).orgId);
+  return Number.isInteger(orgId) && orgId > 0 ? orgId : null;
 }
 
 async function startServer() {
@@ -313,6 +322,19 @@ async function startServer() {
       }
 
       const [newData] = await db.insert(dataPoints).values(parsed.data).returning();
+      await db.insert(auditLogs).values({
+        tableName: "data_points",
+        recordId: newData.id,
+        action: "INSERT",
+        oldValue: null,
+        newValue: {
+          status: newData.status,
+          orgId: newData.orgId,
+          requirementId: newData.requirementId,
+          source: newData.source,
+        },
+        changedBy: access.email,
+      });
       res.json(newData);
     } catch (err) {
       console.error("Failed to create data point:", err);
@@ -543,6 +565,33 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to create materiality assessment:", err);
       res.status(500).json({ error: "Failed to create materiality assessment" });
+    }
+  });
+
+  app.get("/api/audit-logs", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const access = getAccessProfile(req.user);
+      if (access.role === "JV" && access.orgIds.length === 0) {
+        return forbiddenTenant(res);
+      }
+
+      const orgId = requestedOrgId(req);
+      if (orgId && !canAccessOrg(access, orgId)) {
+        return forbiddenTenant(res);
+      }
+
+      const rows = await db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp)).limit(100);
+      const visibleRows = rows.filter((entry) => {
+        const entryOrgId = auditOrgId(entry.newValue) ?? auditOrgId(entry.oldValue);
+        if (!entryOrgId) return access.role === "PLN_NR";
+        if (orgId) return entryOrgId === orgId;
+        return canAccessOrg(access, entryOrgId);
+      });
+
+      res.json(visibleRows);
+    } catch (err) {
+      console.error("Failed to fetch audit logs:", err);
+      res.status(500).json({ error: "Failed to fetch audit logs" });
     }
   });
 
