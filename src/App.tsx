@@ -1,16 +1,33 @@
 import React from 'react';
 import { Shell } from './components/layout/Shell.tsx';
-import { Overview } from './components/dashboard/Overview.tsx';
-import { Inventory } from './components/ghg/Inventory.tsx';
-import { Materiality } from './components/materiality/Assessment.tsx';
-import { Builder } from './components/reporting/Builder.tsx';
-import { IFCChecklist } from './components/safeguards/IFCChecklist.tsx';
-import { Tracker } from './components/actions/Tracker.tsx';
-import { DataEntry } from './components/entry/DataEntry.tsx';
-import { Stakeholders } from './components/stakeholders/Stakeholders.tsx';
-import { EntityWorkspace } from './components/entity/EntityWorkspace.tsx';
 import { useAuth } from './lib/AuthContext.tsx';
 import { Globe, LogIn } from 'lucide-react';
+import { ErrorBoundary } from './components/common/ErrorBoundary.tsx';
+
+function LoadError() {
+  return (
+    <div className="app-panel p-6">
+      <h2 className="text-lg font-semibold text-slate-950">Unable to load this workspace</h2>
+      <p className="mt-2 text-sm text-slate-500">Refresh the page or switch to another module while the application recovers.</p>
+    </div>
+  );
+}
+
+function lazyView<T extends Record<string, React.ComponentType<any>>>(loader: () => Promise<T>, exportName: keyof T) {
+  return React.lazy(() => loader()
+    .then((module) => ({ default: module[exportName] }))
+    .catch(() => ({ default: LoadError })));
+}
+
+const Overview = lazyView(() => import('./components/dashboard/Overview.tsx'), 'Overview');
+const Inventory = lazyView(() => import('./components/ghg/Inventory.tsx'), 'Inventory');
+const Materiality = lazyView(() => import('./components/materiality/Assessment.tsx'), 'Materiality');
+const Builder = lazyView(() => import('./components/reporting/Builder.tsx'), 'Builder');
+const IFCChecklist = lazyView(() => import('./components/safeguards/IFCChecklist.tsx'), 'IFCChecklist');
+const Tracker = lazyView(() => import('./components/actions/Tracker.tsx'), 'Tracker');
+const DataEntry = lazyView(() => import('./components/entry/DataEntry.tsx'), 'DataEntry');
+const Stakeholders = lazyView(() => import('./components/stakeholders/Stakeholders.tsx'), 'Stakeholders');
+const EntityWorkspace = lazyView(() => import('./components/entity/EntityWorkspace.tsx'), 'EntityWorkspace');
 
 export default function App() {
   const [activeTab, setActiveTab] = React.useState('entity-workspace');
@@ -64,7 +81,11 @@ export default function App() {
 
   return (
     <Shell activeTab={activeTab} setActiveTab={setActiveTab}>
-      {renderContent()}
+      <ErrorBoundary resetKey={activeTab}>
+        <React.Suspense fallback={<div className="app-panel p-6 text-sm font-medium text-slate-500">Loading workspace...</div>}>
+          {renderContent()}
+        </React.Suspense>
+      </ErrorBoundary>
     </Shell>
   );
 }
