@@ -73,3 +73,13 @@ export interface ActionItem {
   sourceType?: string;
   sourceId?: number;
 }
+
+export interface MaterialityAssessment {
+  id: number;
+  orgId: number;
+  topic: string;
+  impactMateriality: MaterialityScore;
+  financialMateriality: MaterialityScore;
+  rationale?: string;
+  period: string;
+}
