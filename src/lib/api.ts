@@ -1,4 +1,4 @@
-import type { DataPoint, DisclosureRequirement, Framework, Organization } from "../types.ts";
+import type { DataPoint, DisclosureRequirement, Framework, GHGEntry, Organization } from "../types.ts";
 
 type TokenProvider = () => Promise<string | null>;
 
@@ -47,8 +47,21 @@ export function listDataPoints(orgId?: number) {
   return apiRequest<DataPoint[]>(`/api/data-points${query}`);
 }
 
+export function listGhgInventory(orgId?: number) {
+  const query = orgId ? `?orgId=${orgId}` : "";
+  return apiRequest<GHGEntry[]>(`/api/ghg${query}`);
+}
+
 export function createDataPoint(input: Omit<DataPoint, "id" | "status"> & { status?: string }, getToken: TokenProvider) {
   return apiRequest<DataPoint>("/api/data-points", {
+    method: "POST",
+    getToken,
+    body: JSON.stringify(input),
+  });
+}
+
+export function createGhgEntry(input: Omit<GHGEntry, "id">, getToken: TokenProvider) {
+  return apiRequest<GHGEntry>("/api/ghg", {
     method: "POST",
     getToken,
     body: JSON.stringify(input),

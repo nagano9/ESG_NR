@@ -35,6 +35,22 @@ const dataPointSchema = z.object({
   path: ["periodEnd"],
 });
 
+const ghgEntrySchema = z.object({
+  orgId: z.number().int().positive(),
+  scope: z.coerce.number().int().min(1).max(3),
+  category: z.string().min(1).optional(),
+  gasType: z.string().min(1).default("CO2e"),
+  emissions: z.number().finite().nonnegative(),
+  unit: z.string().min(1).default("tCO2e"),
+  periodStart: z.coerce.date(),
+  periodEnd: z.coerce.date(),
+  methodology: z.string().min(1).optional(),
+  locationBased: z.boolean().default(true),
+}).refine((data) => data.periodEnd >= data.periodStart, {
+  message: "periodEnd must be after or equal to periodStart",
+  path: ["periodEnd"],
+});
+
 const aiDraftSchema = z.object({
   data: z.unknown(),
   framework: z.string().min(1),
@@ -182,6 +198,21 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to fetch GHG inventory:", err);
       res.status(500).json({ error: "Failed to fetch GHG inventory" });
+    }
+  });
+
+  app.post("/api/ghg", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const parsed = ghgEntrySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [created] = await db.insert(ghgInventory).values(parsed.data).returning();
+      res.json(created);
+    } catch (err) {
+      console.error("Failed to create GHG inventory entry:", err);
+      res.status(500).json({ error: "Failed to create GHG inventory entry" });
     }
   });
 

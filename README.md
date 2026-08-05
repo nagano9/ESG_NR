@@ -26,13 +26,21 @@ AIPulse ESG is a command-center style ESG management app for Nusantara Renewable
 
 3. Fill the PostgreSQL, Firebase, and Gemini values in `.env`.
 
-4. Run the development server:
+4. Apply the initial database schema to an empty PostgreSQL database:
+
+   ```bash
+   psql "$DATABASE_URL" -f drizzle/0000_initial_esg_schema.sql
+   ```
+
+5. Optionally set `SEED_ON_STARTUP="true"` for local demo data.
+
+6. Run the development server:
 
    ```bash
    bun run dev
    ```
 
-5. Open the app at `http://localhost:3000`.
+7. Open the app at `http://localhost:3000`.
 
 ## Useful Scripts
 
