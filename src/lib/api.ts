@@ -74,6 +74,14 @@ export function createDataPoint(input: Omit<DataPoint, "id" | "status"> & { stat
   });
 }
 
+export function updateDataPointStatus(id: number, status: "DRAFT" | "REVIEW" | "APPROVED", getToken: TokenProvider) {
+  return apiRequest<DataPoint>(`/api/data-points/${id}/status`, {
+    method: "PATCH",
+    getToken,
+    body: JSON.stringify({ status }),
+  });
+}
+
 export function createGhgEntry(input: Omit<GHGEntry, "id">, getToken: TokenProvider) {
   return apiRequest<GHGEntry>("/api/ghg", {
     method: "POST",
