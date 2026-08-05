@@ -3,7 +3,7 @@ import path from "path";
 import { z } from "zod";
 import { createServer as createViteServer } from "vite";
 import { db } from "./src/db/index.ts";
-import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory } from "./src/db/schema.ts";
+import { organizations, frameworks, disclosureRequirements, dataPoints, ghgInventory, actions } from "./src/db/schema.ts";
 import { eq } from "drizzle-orm";
 import { draftNarrativeDisclosure, performGapAnalysis } from "./src/lib/gemini.ts";
 import { seedESGData } from "./src/lib/seed.ts";
@@ -49,6 +49,22 @@ const ghgEntrySchema = z.object({
 }).refine((data) => data.periodEnd >= data.periodStart, {
   message: "periodEnd must be after or equal to periodStart",
   path: ["periodEnd"],
+});
+
+const actionSchema = z.object({
+  orgId: z.number().int().positive(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  owner: z.string().optional(),
+  dueDate: z.coerce.date().optional(),
+  status: z.enum(["OPEN", "IN_PROGRESS", "CLOSED", "OVERDUE"]).default("OPEN"),
+  priority: z.string().min(1).default("MEDIUM"),
+  sourceType: z.string().optional(),
+  sourceId: z.number().int().positive().optional(),
+});
+
+const actionStatusSchema = z.object({
+  status: z.enum(["OPEN", "IN_PROGRESS", "CLOSED", "OVERDUE"]),
 });
 
 const aiDraftSchema = z.object({
@@ -213,6 +229,66 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to create GHG inventory entry:", err);
       res.status(500).json({ error: "Failed to create GHG inventory entry" });
+    }
+  });
+
+  // Actions
+  app.get("/api/actions", async (req, res) => {
+    try {
+      const { orgId } = req.query;
+      if (orgId) {
+        const data = await db.select().from(actions).where(eq(actions.orgId, Number(orgId)));
+        res.json(data);
+      } else {
+        const data = await db.select().from(actions);
+        res.json(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch actions:", err);
+      res.status(500).json({ error: "Failed to fetch actions" });
+    }
+  });
+
+  app.post("/api/actions", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const parsed = actionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [created] = await db.insert(actions).values(parsed.data).returning();
+      res.json(created);
+    } catch (err) {
+      console.error("Failed to create action:", err);
+      res.status(500).json({ error: "Failed to create action" });
+    }
+  });
+
+  app.patch("/api/actions/:id", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid action id" });
+      }
+
+      const parsed = actionStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [updated] = await db.update(actions).set({
+        status: parsed.data.status,
+        updatedAt: new Date(),
+      }).where(eq(actions.id, id)).returning();
+
+      if (!updated) {
+        return res.status(404).json({ error: "Action not found" });
+      }
+
+      res.json(updated);
+    } catch (err) {
+      console.error("Failed to update action:", err);
+      res.status(500).json({ error: "Failed to update action" });
     }
   });
 
