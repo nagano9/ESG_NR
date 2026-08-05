@@ -1,4 +1,4 @@
-import type { DataPoint, DisclosureRequirement, Framework, GHGEntry, Organization } from "../types.ts";
+import type { ActionItem, DataPoint, DisclosureRequirement, Framework, GHGEntry, Organization } from "../types.ts";
 
 type TokenProvider = () => Promise<string | null>;
 
@@ -52,6 +52,11 @@ export function listGhgInventory(orgId?: number) {
   return apiRequest<GHGEntry[]>(`/api/ghg${query}`);
 }
 
+export function listActions(orgId?: number) {
+  const query = orgId ? `?orgId=${orgId}` : "";
+  return apiRequest<ActionItem[]>(`/api/actions${query}`);
+}
+
 export function createDataPoint(input: Omit<DataPoint, "id" | "status"> & { status?: string }, getToken: TokenProvider) {
   return apiRequest<DataPoint>("/api/data-points", {
     method: "POST",
@@ -65,6 +70,22 @@ export function createGhgEntry(input: Omit<GHGEntry, "id">, getToken: TokenProvi
     method: "POST",
     getToken,
     body: JSON.stringify(input),
+  });
+}
+
+export function createAction(input: Omit<ActionItem, "id" | "status"> & { status?: string }, getToken: TokenProvider) {
+  return apiRequest<ActionItem>("/api/actions", {
+    method: "POST",
+    getToken,
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateActionStatus(id: number, status: ActionItem["status"], getToken: TokenProvider) {
+  return apiRequest<ActionItem>(`/api/actions/${id}`, {
+    method: "PATCH",
+    getToken,
+    body: JSON.stringify({ status }),
   });
 }
 
