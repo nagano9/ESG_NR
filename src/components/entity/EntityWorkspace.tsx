@@ -53,6 +53,7 @@ export function EntityWorkspace() {
   const [ghgForm, setGhgForm] = React.useState({ scope: "1", category: "", emissions: "", methodology: "" });
   const [actionForm, setActionForm] = React.useState({ title: "", owner: "", dueDate: "", description: "" });
   const [materialityForm, setMaterialityForm] = React.useState({ topic: "", impactMateriality: "HIGH", financialMateriality: "HIGH", rationale: "" });
+  const [returnNotes, setReturnNotes] = React.useState<Record<number, string>>({});
 
   React.useEffect(() => {
     let active = true;
@@ -227,9 +228,20 @@ export function EntityWorkspace() {
   }
 
   async function reviewDataPoint(dataPoint: DataPoint, status: "DRAFT" | "APPROVED") {
+    const reason = returnNotes[dataPoint.id]?.trim();
+    if (status === "DRAFT" && !reason) {
+      toast.error("Return note is required", { description: "Explain what the JV entity must fix before resubmission." });
+      return;
+    }
+
     try {
-      const updated = await updateDataPointStatus(dataPoint.id, status, getToken);
+      const updated = await updateDataPointStatus(dataPoint.id, status, getToken, reason);
       setDataPoints((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setReturnNotes((current) => {
+        const next = { ...current };
+        delete next[dataPoint.id];
+        return next;
+      });
       toast.success(status === "APPROVED" ? "Submission approved" : "Submission returned to draft");
     } catch (error) {
       toast.error("Review action failed", {
@@ -289,7 +301,7 @@ export function EntityWorkspace() {
                 {reviewData.length > 0 ? reviewData.slice(0, 8).map((item) => {
                   const requirement = requirements.find((req) => req.id === item.requirementId);
                   return (
-                    <div key={item.id} className="grid grid-cols-1 gap-4 border border-[#141414]/10 p-4 lg:grid-cols-6 lg:items-center">
+                    <div key={item.id} className="grid grid-cols-1 gap-4 border border-[#141414]/10 p-4 lg:grid-cols-7 lg:items-center">
                       <div className="lg:col-span-2">
                         <p className="text-[11px] font-bold uppercase tracking-tight">{requirement?.code ?? `Metric ${item.id}`}</p>
                         <p className="mt-1 text-[9px] italic opacity-60">{requirement?.title ?? item.methodology ?? "Unmapped metric"}</p>
@@ -306,6 +318,12 @@ export function EntityWorkspace() {
                         <span className="text-[8px] font-bold uppercase opacity-40">Owner</span>
                         <p className="text-[10px] font-bold uppercase tracking-tight">{item.owner ?? "Unknown"}</p>
                       </div>
+                      <textarea
+                        value={returnNotes[item.id] ?? ""}
+                        onChange={(event) => setReturnNotes((current) => ({ ...current, [item.id]: event.target.value }))}
+                        placeholder="Return note"
+                        className="min-h-20 border border-[#141414]/20 bg-[#F5F5F3] px-3 py-2 text-[10px] font-bold uppercase tracking-tight outline-none focus:border-[#141414]"
+                      />
                       <div className="flex gap-2 lg:justify-end">
                         <button onClick={() => reviewDataPoint(item, "APPROVED")} className="flex items-center gap-1 bg-emerald-500 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-[#141414]">
                           <CheckCircle2 className="h-3.5 w-3.5" /> Approve
