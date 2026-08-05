@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard, Globe, FileText, BarChart3, ShieldCheck, ListTodo, Users, Settings, ChevronRight, Menu, Database, Search, User, Plus, Zap } from "lucide-react";
+import { LayoutDashboard, Globe, FileText, BarChart3, ShieldCheck, ListTodo, Users, ChevronRight, Database, Search, User, Plus, Zap, Building2 } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 
 interface ShellProps {
@@ -9,6 +9,7 @@ interface ShellProps {
 }
 
 const navItems = [
+  { id: "entity-workspace", label: "JV Workspace", icon: Building2 },
   { id: "overview", label: "Portfolio Overview", icon: LayoutDashboard },
   { id: "data-entry", label: "Data Submission", icon: Database },
   { id: "ghg", label: "GHG Inventory", icon: Globe },
@@ -101,7 +102,7 @@ export function Shell({ children, activeTab, setActiveTab }: ShellProps) {
                 className="w-full bg-[#141414]/5 border border-[#141414]/10 py-2.5 pl-10 pr-4 text-[10px] font-bold uppercase tracking-widest focus:outline-none focus:border-[#141414] transition-all"
               />
               <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-1">
-                <span className="text-[7px] bg-[#141414]/10 px-1 py-0.5 border border-[#141414]/20">⌘</span>
+                <span className="text-[7px] bg-[#141414]/10 px-1 py-0.5 border border-[#141414]/20">âŒ˜</span>
                 <span className="text-[7px] bg-[#141414]/10 px-1 py-0.5 border border-[#141414]/20">K</span>
               </div>
             </div>
