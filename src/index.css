@@ -27,6 +27,10 @@
     @apply text-[11px] leading-tight;
   }
 
+  .field {
+    @apply w-full border-b-2 border-[#141414] bg-transparent py-2 text-[11px] font-bold outline-none placeholder:uppercase placeholder:tracking-widest placeholder:opacity-40;
+  }
+
   .tech-border {
     @apply border border-[#141414];
   }
