@@ -74,11 +74,11 @@ export function createDataPoint(input: Omit<DataPoint, "id" | "status"> & { stat
   });
 }
 
-export function updateDataPointStatus(id: number, status: "DRAFT" | "REVIEW" | "APPROVED", getToken: TokenProvider) {
+export function updateDataPointStatus(id: number, status: "DRAFT" | "REVIEW" | "APPROVED", getToken: TokenProvider, reason?: string) {
   return apiRequest<DataPoint>(`/api/data-points/${id}/status`, {
     method: "PATCH",
     getToken,
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, reason }),
   });
 }
 
