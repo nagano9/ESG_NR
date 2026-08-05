@@ -67,6 +67,10 @@ const actionStatusSchema = z.object({
   status: z.enum(["OPEN", "IN_PROGRESS", "CLOSED", "OVERDUE"]),
 });
 
+const dataPointStatusSchema = z.object({
+  status: z.enum(["DRAFT", "REVIEW", "APPROVED"]),
+});
+
 const materialitySchema = z.object({
   orgId: z.number().int().positive(),
   topic: z.string().min(1),
@@ -309,6 +313,39 @@ async function startServer() {
     } catch (err) {
       console.error("Failed to create data point:", err);
       res.status(500).json({ error: "Failed to create data point" });
+    }
+  });
+
+  app.patch("/api/data-points/:id/status", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const access = getAccessProfile(req.user);
+      if (access.role !== "PLN_NR") {
+        return forbiddenTenant(res);
+      }
+
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid data point id" });
+      }
+
+      const parsed = dataPointStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(validationError(parsed.error));
+      }
+
+      const [updated] = await db.update(dataPoints).set({
+        status: parsed.data.status,
+        updatedAt: new Date(),
+      }).where(eq(dataPoints.id, id)).returning();
+
+      if (!updated) {
+        return res.status(404).json({ error: "Data point not found" });
+      }
+
+      res.json(updated);
+    } catch (err) {
+      console.error("Failed to update data point status:", err);
+      res.status(500).json({ error: "Failed to update data point status" });
     }
   });
 
