@@ -1,4 +1,4 @@
-import type { ActionItem, DataPoint, DisclosureRequirement, Framework, GHGEntry, MaterialityAssessment, Organization } from "../types.ts";
+import type { ActionItem, DataPoint, DisclosureRequirement, Framework, GHGEntry, MaterialityAssessment, Organization, UserAccessProfile } from "../types.ts";
 
 type TokenProvider = () => Promise<string | null>;
 
@@ -29,8 +29,12 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   return payload as T;
 }
 
-export function listOrganizations() {
-  return apiRequest<Organization[]>("/api/orgs");
+export function getAccessProfile(getToken: TokenProvider) {
+  return apiRequest<UserAccessProfile>("/api/me/access", { getToken });
+}
+
+export function listOrganizations(getToken?: TokenProvider) {
+  return apiRequest<Organization[]>("/api/orgs", { getToken });
 }
 
 export function listFrameworks() {
@@ -42,24 +46,24 @@ export function listRequirements(frameworkId?: number) {
   return apiRequest<DisclosureRequirement[]>(`/api/requirements${query}`);
 }
 
-export function listDataPoints(orgId?: number) {
+export function listDataPoints(orgId?: number, getToken?: TokenProvider) {
   const query = orgId ? `?orgId=${orgId}` : "";
-  return apiRequest<DataPoint[]>(`/api/data-points${query}`);
+  return apiRequest<DataPoint[]>(`/api/data-points${query}`, { getToken });
 }
 
-export function listGhgInventory(orgId?: number) {
+export function listGhgInventory(orgId?: number, getToken?: TokenProvider) {
   const query = orgId ? `?orgId=${orgId}` : "";
-  return apiRequest<GHGEntry[]>(`/api/ghg${query}`);
+  return apiRequest<GHGEntry[]>(`/api/ghg${query}`, { getToken });
 }
 
-export function listActions(orgId?: number) {
+export function listActions(orgId?: number, getToken?: TokenProvider) {
   const query = orgId ? `?orgId=${orgId}` : "";
-  return apiRequest<ActionItem[]>(`/api/actions${query}`);
+  return apiRequest<ActionItem[]>(`/api/actions${query}`, { getToken });
 }
 
-export function listMaterialityAssessments(orgId?: number) {
+export function listMaterialityAssessments(orgId?: number, getToken?: TokenProvider) {
   const query = orgId ? `?orgId=${orgId}` : "";
-  return apiRequest<MaterialityAssessment[]>(`/api/materiality${query}`);
+  return apiRequest<MaterialityAssessment[]>(`/api/materiality${query}`, { getToken });
 }
 
 export function createDataPoint(input: Omit<DataPoint, "id" | "status"> & { status?: string }, getToken: TokenProvider) {
