@@ -60,3 +60,16 @@ export interface GHGEntry {
   methodology?: string;
   locationBased: boolean;
 }
+
+export interface ActionItem {
+  id: number;
+  orgId: number;
+  title: string;
+  description?: string;
+  owner?: string;
+  dueDate?: string;
+  status: ActionStatus;
+  priority?: string;
+  sourceType?: string;
+  sourceId?: number;
+}
