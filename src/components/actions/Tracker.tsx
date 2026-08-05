@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertCircle, Calendar, Filter, Plus, Save, X } from "lucide-react";
+import { AlertCircle, Calendar, CheckCircle2, Clock3, Filter, Plus, Search, Save, ShieldAlert, X } from "lucide-react";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -35,6 +35,27 @@ function formatDate(value?: string) {
   return new Date(value).toISOString().slice(0, 10);
 }
 
+function daysUntil(value?: string) {
+  if (!value) return null;
+  const dueDate = new Date(value).getTime();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.ceil((dueDate - today.getTime()) / 86_400_000);
+}
+
+function actionSummary(actions: ActionItem[]) {
+  const closed = actions.filter((action) => action.status === "CLOSED").length;
+  const overdue = actions.filter((action) => action.status === "OVERDUE" || (daysUntil(action.dueDate) ?? 1) < 0).length;
+  const critical = actions.filter((action) => action.priority === "CRITICAL" || action.priority === "HIGH").length;
+  return {
+    total: actions.length,
+    closed,
+    overdue,
+    critical,
+    closureRate: actions.length ? Math.round((closed / actions.length) * 100) : 0,
+  };
+}
+
 function maturity(actions: ActionItem[]) {
   const total = Math.max(actions.length, 1);
   const logged = actions.length > 0 ? 100 : 0;
@@ -54,6 +75,7 @@ export function Tracker() {
   const [isAdding, setIsAdding] = React.useState(false);
   const [usingFallback, setUsingFallback] = React.useState(false);
   const [statusFilter, setStatusFilter] = React.useState<ActionStatus | "ALL">("ALL");
+  const [searchTerm, setSearchTerm] = React.useState("");
   const { getToken } = useAuth();
 
   const form = useForm<ActionFormData>({
@@ -74,7 +96,7 @@ export function Tracker() {
     async function load() {
       setIsLoading(true);
       try {
-        const [orgs, items] = await Promise.all([listOrganizations(), listActions()]);
+        const [orgs, items] = await Promise.all([listOrganizations(getToken), listActions(undefined, getToken)]);
         if (!active) return;
         setOrganizations(orgs);
         setActions(items);
@@ -100,8 +122,13 @@ export function Tracker() {
     ? organizations
     : jvcEntities.map((entity, index) => ({ id: index + 1, name: entity.name, type: "JVC" as const }));
 
-  const visibleActions = statusFilter === "ALL" ? actions : actions.filter((action) => action.status === statusFilter);
+  const visibleActions = actions.filter((action) => {
+    const matchesStatus = statusFilter === "ALL" || action.status === statusFilter;
+    const haystack = `${action.title} ${action.description ?? ""} ${action.owner ?? ""} ${action.sourceType ?? ""} ${action.priority ?? ""}`.toLowerCase();
+    return matchesStatus && haystack.includes(searchTerm.toLowerCase());
+  });
   const overdue = actions.filter((action) => action.status === "OVERDUE").sort((a, b) => formatDate(a.dueDate).localeCompare(formatDate(b.dueDate)))[0];
+  const summary = actionSummary(actions);
 
   async function onSubmit(data: ActionFormData) {
     try {
@@ -148,9 +175,13 @@ export function Tracker() {
           <p className="mt-1 text-[10px] uppercase tracking-widest opacity-60">E&S compliance, K3 safety, SMAP, and disclosure corrective actions</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <button onClick={() => setStatusFilter(statusFilter === "ALL" ? "OPEN" : "ALL")} className="flex items-center gap-2 border border-[#141414] px-4 py-2 text-[10px] font-bold uppercase tracking-widest">
-            <Filter className="h-3.5 w-3.5" /> {statusFilter === "ALL" ? "Open Filter" : "Show All"}
-          </button>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as ActionStatus | "ALL")} className="field w-44">
+            <option value="ALL">All actions</option>
+            <option value="OPEN">Open</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="OVERDUE">Overdue</option>
+            <option value="CLOSED">Closed</option>
+          </select>
           <button onClick={() => setIsAdding(true)} disabled={usingFallback} className="flex items-center gap-2 bg-[#141414] px-6 py-3 text-[10px] font-bold uppercase tracking-widest text-[#E4E3E0] shadow-[4px_4px_0_#A09F9C] disabled:opacity-50">
             <Plus className="h-4 w-4" /> Log New Action
           </button>
@@ -163,6 +194,13 @@ export function Tracker() {
           <p className="text-[10px] font-bold uppercase tracking-widest">Fallback action data is active. Live write actions are disabled until backend data is reachable.</p>
         </div>
       )}
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <ActionMetric icon={Filter} label="Total Actions" value={summary.total} />
+        <ActionMetric icon={ShieldAlert} label="Critical / High" value={summary.critical} tone={summary.critical ? "amber" : "green"} />
+        <ActionMetric icon={Clock3} label="Overdue" value={summary.overdue} tone={summary.overdue ? "red" : "green"} />
+        <ActionMetric icon={CheckCircle2} label="Closure Rate" value={`${summary.closureRate}%`} tone={summary.closureRate >= 80 ? "green" : "amber"} />
+      </div>
 
       {isAdding && (
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid grid-cols-1 gap-5 border border-[#141414] bg-white p-6 shadow-[8px_8px_0_#10B981] lg:grid-cols-6">
@@ -192,6 +230,18 @@ export function Tracker() {
       )}
 
       <div className="overflow-hidden border border-[#141414] bg-white shadow-[8px_8px_0_#141414]">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative w-full max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search action, owner, source, or priority"
+              className="field pl-10"
+            />
+          </div>
+          <p className="text-xs font-medium text-slate-500">{visibleActions.length} visible of {actions.length} actions</p>
+        </div>
         <div className="grid grid-cols-8 border-b border-[#141414] bg-[#D4D3D0]/30">
           <div className="col-header col-span-2">Action Item</div>
           <div className="col-header">Category</div>
@@ -226,6 +276,11 @@ export function Tracker() {
                 </div>
                 <div className="audit-font flex items-center gap-2 uppercase tracking-tighter">
                   <Calendar className="h-3 w-3 opacity-40" /> {formatDate(action.dueDate)}
+                  {typeof daysUntil(action.dueDate) === "number" && (
+                    <span className={cn("ml-1 text-[8px] font-semibold", (daysUntil(action.dueDate) ?? 0) < 0 ? "text-red-500" : "text-slate-400")}>
+                      {daysUntil(action.dueDate)}d
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={cn("h-1.5 w-1.5 rounded-full", action.status === "OPEN" ? "bg-amber-500" : action.status === "OVERDUE" ? "bg-red-500" : action.status === "CLOSED" ? "bg-emerald-500" : "bg-sky-500")} />
@@ -279,6 +334,18 @@ export function Tracker() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ActionMetric({ icon: Icon, label, value, tone = "neutral" }: { icon: typeof Filter; label: string; value: number | string; tone?: "neutral" | "amber" | "green" | "red" }) {
+  return (
+    <div className="app-card p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <span className="app-muted">{label}</span>
+        <Icon className={cn("h-4 w-4", tone === "amber" ? "text-amber-500" : tone === "green" ? "text-emerald-500" : tone === "red" ? "text-red-500" : "text-slate-400")} />
+      </div>
+      <p className="text-2xl font-semibold tracking-tight text-slate-950">{value}</p>
     </div>
   );
 }
