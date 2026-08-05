@@ -1,6 +1,9 @@
 import React from "react";
 import { LayoutDashboard, Globe, FileText, BarChart3, ShieldCheck, ListTodo, Users, ChevronRight, Database, Search, User, Plus, Zap, Building2 } from "lucide-react";
 import { cn } from "@/src/lib/utils";
+import { getAccessProfile } from "../../lib/api.ts";
+import { useAuth } from "../../lib/AuthContext.tsx";
+import type { UserAccessProfile } from "../../types.ts";
 
 interface ShellProps {
   children: React.ReactNode;
@@ -22,6 +25,32 @@ const navItems = [
 
 export function Shell({ children, activeTab, setActiveTab }: ShellProps) {
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
+  const [profile, setProfile] = React.useState<UserAccessProfile | null>(null);
+  const { getToken } = useAuth();
+
+  React.useEffect(() => {
+    let active = true;
+    getAccessProfile(getToken)
+      .then((access) => {
+        if (active) setProfile(access);
+      })
+      .catch(() => {
+        if (active) setProfile({ email: "", role: "JV", orgIds: [] });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const visibleNavItems = profile?.role === "JV"
+    ? navItems.filter((item) => item.id === "entity-workspace")
+    : navItems;
+
+  React.useEffect(() => {
+    if (profile?.role === "JV" && activeTab !== "entity-workspace") {
+      setActiveTab("entity-workspace");
+    }
+  }, [profile, activeTab, setActiveTab]);
 
   return (
     <div className="flex h-screen bg-[#E4E3E0] text-[#141414]">
@@ -40,7 +69,7 @@ export function Shell({ children, activeTab, setActiveTab }: ShellProps) {
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
