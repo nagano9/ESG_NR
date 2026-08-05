@@ -90,3 +90,14 @@ export interface UserAccessProfile {
   orgIds: number[];
   orgName?: string;
 }
+
+export interface AuditLogEntry {
+  id: number;
+  tableName: string;
+  recordId: number;
+  action: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+  changedBy?: string;
+  timestamp?: string;
+}
